@@ -52,3 +52,12 @@ Where the installed WeasyPrint supports `--pdf-tags`, the renderer enables tagge
 ### Arabic text extraction mitigation
 
 For Arabic-language PDFs, WeasyPrint rendering now disables optional/required ligature OpenType substitutions (`liga` and `rlig`) to improve Unicode copy/paste mapping where system fonts and renderer support it. This is an experimental compatibility mitigation; it may change typography. Full visual review and extraction parity remain mandatory, and PDFs with extraction mismatches stay blocked.
+
+## Release hardening round 2
+
+- **Strict document parity:** PDF and DOCX must preserve every expected word and number. In mixed-script or RTL text, a complete token match does not prove correct reading order; visual review remains required.
+- **Consent journal audit (optional):** `node scripts/cv-craft.mjs audit-workflow --file workflow-journal.json` checks stage ordering, named-source permissions, candidate approvals, free ATS consent and approval invalidation. `render --journal workflow-journal.json` additionally checks that the approved content hash matches the CV. The journal is an operator attestation, not identity proof.
+- **Document accessibility audit:** `node scripts/document-a11y-qa.mjs --docx CV.docx --pdf CV.pdf --lang en`. DOCX semantic headings, hyperlinks and hidden document content are inspected. PDF tagging is reported; accessibility conformance and screen-reader reading order are **not certified**.
+- **Install smoke tests:** Both user-wide and project-local symlink layouts are tested on GitHub Actions. Actual automatic skill selection by Codex must be verified in a real Codex session.
+
+This hardening work does not close the known release blockers: comprehensive RTL corpus/reading-order verification, independent assistive-technology assessment, actual multi-step Codex employer research and interviewing, candidate visual acceptance, and local activation confirmation.
