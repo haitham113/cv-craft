@@ -1,0 +1,153 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import {spawnSync} from 'node:child_process';
+const script=path.resolve('scripts/cv-craft.mjs');
+function call(action,options=[]){return spawnSync(process.execPath,[script,action,...options],{encoding:'utf8',timeout:60000});}
+function temp(){return fs.mkdtempSync(path.join(os.tmpdir(),'cv-craft-test-'));}
+test('valid canonical document',()=>{const r=call('validate',['--file','fixtures/example.json']);assert.equal(r.status,0,r.stderr);});
+test('unverified fact blocked',()=>{const w=temp(),d=JSON.parse(fs.readFileSync('fixtures/example.json'));d.evidence[0].status='unverified';const f=path.join(w,'cv.json');fs.writeFileSync(f,JSON.stringify(d));assert.notEqual(call('validate',['--file',f]).status,0);fs.rmSync(w,{force:true,recursive:true});});
+test('approval hash invalidated by changes',()=>{const w=temp(),f=path.join(w,'cv.json'),state=path.join(w,'state');fs.copyFileSync('fixtures/example.json',f);assert.equal(call('approve',['--file',f,'--workspace',state,'--confirmation','APPROVED']).status,0);const d=JSON.parse(fs.readFileSync(f));d.summary+=' Changed';fs.writeFileSync(f,JSON.stringify(d));const r=call('render',['--file',f,'--workspace',state]);assert.notEqual(r.status,0);fs.rmSync(w,{force:true,recursive:true});});
+test('verified-only fit score',()=>{const w=temp();assert.notEqual(call('score',['--file','fixtures/fit.json','--workspace',w]).status,0);assert.equal(call('approve',['--scope','weights','--file','fixtures/fit.json','--workspace',w,'--confirmation','APPROVED']).status,0);const r=call('score',['--file','fixtures/fit.json','--workspace',w]);assert.equal(r.status,0,r.stderr);const x=JSON.parse(r.stdout);assert.equal(x.fitAmongVerifiedPercent,85.71);assert.equal(x.unverifiedWeight,3);fs.rmSync(w,{force:true,recursive:true});});
+test('safe managed cleanup only',()=>{const w=temp();assert.notEqual(call('close',['--workspace',w,'--confirmation','CLOSE']).status,0);assert.equal(call('approve',['--file','fixtures/example.json','--workspace',w,'--confirmation','APPROVED']).status,0);assert.equal(call('close',['--workspace',w,'--confirmation','CLOSE']).status,0);});
+test('PDF and DOCX parse and parity', {skip:spawnSync('which',['weasyprint']).status!==0||spawnSync('which',['pdftotext']).status!==0||spawnSync('which',['unzip']).status!==0},()=>{
+const w=temp(),out=path.join(w,'outputs');
+assert.equal(call('approve',['--file','fixtures/example.json','--workspace',w,'--confirmation','APPROVED']).status,0);
+const r=call('render',['--file','fixtures/example.json','--workspace',w,'--output',out]);
+assert.equal(r.status,0,r.stderr+r.stdout);
+const result=JSON.parse(r.stdout);assert.equal(result.qa.critical,false,JSON.stringify(result.qa));
+assert.ok(fs.existsSync(result.files.docx));assert.ok(fs.existsSync(result.files.pdf));
+fs.rmSync(w,{force:true,recursive:true});
+});
+
+
+test('reject unsupported CV properties and unsafe candidate links',()=>{
+ const w=temp(),cv=JSON.parse(fs.readFileSync('fixtures/example.json','utf8')),f=path.join(w,'cv.json');
+ cv.unexpected='not silently ignored';fs.writeFileSync(f,JSON.stringify(cv));assert.notEqual(call('validate',['--file',f]).status,0);
+ delete cv.unexpected;cv.candidate.links=['javascript:alert(1)'];fs.writeFileSync(f,JSON.stringify(cv));assert.notEqual(call('validate',['--file',f]).status,0);
+ fs.rmSync(w,{recursive:true,force:true});
+});
+test('require evidence-backed statements and reference integrity',()=>{
+ const w=temp(),cv=JSON.parse(fs.readFileSync('fixtures/example.json','utf8')),f=path.join(w,'cv.json');
+ cv.claims[0].evidenceIds=['missing'];fs.writeFileSync(f,JSON.stringify(cv));assert.notEqual(call('validate',['--file',f]).status,0);
+ cv.claims[0].evidenceIds=['e1'];cv.sections[0].blocks[0].items[0].claimIds=['missing'];fs.writeFileSync(f,JSON.stringify(cv));assert.notEqual(call('validate',['--file',f]).status,0);
+ fs.rmSync(w,{recursive:true,force:true});
+});
+test('versioned schema migration creates backup and invalidates prior approval',()=>{
+ const w=temp(),f=path.join(w,'cv.json'),state=path.join(w,'state');fs.copyFileSync('fixtures/example.json',f);
+ assert.equal(call('approve',['--file',f,'--workspace',state,'--confirmation','APPROVED']).status,0);
+ const r=call('migrate',['--file',f,'--workspace',state]);assert.equal(r.status,0,r.stderr);
+ const report=JSON.parse(r.stdout);assert.equal(report.to,'1.1.0');assert.ok(fs.existsSync(report.backup));
+ assert.equal(JSON.parse(fs.readFileSync(f,'utf8')).schemaVersion,'1.1.0');
+ assert.notEqual(call('render',['--file',f,'--workspace',state,'--output',path.join(w,'out')]).status,0);
+ fs.rmSync(w,{recursive:true,force:true});
+});
+test('fit evaluation rejects verified requirements without evidence',()=>{
+ const w=temp(),f=path.join(w,'fit.json'),d=JSON.parse(fs.readFileSync('fixtures/fit.json','utf8'));
+ delete d.requirements[0].evidenceIds;fs.writeFileSync(f,JSON.stringify(d));
+ assert.notEqual(call('approve',['--scope','weights','--file',f,'--workspace',w,'--confirmation','APPROVED']).status,0);
+ fs.rmSync(w,{recursive:true,force:true});
+});
+test('external hyperlinks are real DOCX relationships and safe PDF anchors',{
+ skip:spawnSync('which',['weasyprint']).status!==0||spawnSync('which',['pdftotext']).status!==0||spawnSync('which',['unzip']).status!==0
+},()=>{
+ const w=temp(),f=path.join(w,'cv.json'),state=path.join(w,'state'),cv=JSON.parse(fs.readFileSync('fixtures/example.json','utf8'));
+ cv.candidate.links=['https://example.org/portfolio'];fs.writeFileSync(f,JSON.stringify(cv));
+ assert.equal(call('approve',['--file',f,'--workspace',state,'--confirmation','APPROVED']).status,0);
+ const r=call('render',['--file',f,'--workspace',state,'--output',path.join(w,'out')]);
+ assert.equal(r.status,0,r.stderr+r.stdout);
+ const doc=JSON.parse(r.stdout).files.docx;
+ const xml=spawnSync('unzip',['-p',doc,'word/document.xml'],{encoding:'utf8'}).stdout;
+ const rel=spawnSync('unzip',['-p',doc,'word/_rels/document.xml.rels'],{encoding:'utf8'}).stdout;
+ assert.match(xml,/w:hyperlink r:id="cvlink1"/);
+ assert.match(rel,/TargetMode="External"/);
+ assert.match(rel,/https:\/\/example.org\/portfolio/);
+ fs.rmSync(w,{recursive:true,force:true});
+});
+
+test('doctor reports capability status without installing dependencies',()=>{
+ const r=call('doctor');assert.equal(r.status,0,r.stderr);const d=JSON.parse(r.stdout);
+ assert.ok(d.node);assert.ok(Array.isArray(d.tools));assert.ok(Array.isArray(d.missing));
+});
+test('privacy-safe migration backups are deleted on explicit workflow close',()=>{
+ const w=temp(),f=path.join(w,'source.json'),state=path.join(w,'managed');
+ fs.copyFileSync('fixtures/example.json',f);
+ assert.equal(call('migrate',['--file',f,'--workspace',state]).status,0);
+ const entries=fs.readdirSync(path.join(state,'backups'));
+ assert.equal(entries.length,1);assert.ok(fs.existsSync(f));
+ assert.equal(call('close',['--workspace',state,'--confirmation','CLOSE']).status,0);
+ assert.ok(fs.existsSync(f));assert.ok(!fs.existsSync(state));
+ fs.rmSync(w,{recursive:true,force:true});
+});
+test('workspace cannot be a symlink or an existing unmanaged directory',()=>{
+ const w=temp(),outside=path.join(w,'external');fs.mkdirSync(outside);
+ fs.writeFileSync(path.join(outside,'unrelated.txt'),'keep');
+ const link=path.join(w,'link');fs.symlinkSync(outside,link);
+ for(const target of [outside,link]){
+  const r=call('approve',['--file','fixtures/example.json','--workspace',target,'--confirmation','APPROVED']);
+  assert.notEqual(r.status,0,'Must refuse unsafe target '+target);
+ }
+ assert.equal(fs.readFileSync(path.join(outside,'unrelated.txt'),'utf8'),'keep');
+ fs.rmSync(w,{recursive:true,force:true});
+});
+
+test('Arabic RTL CV retains localized content and blocks unsafe PDF when extraction differs',{
+ skip:spawnSync('which',['weasyprint']).status!==0||spawnSync('which',['pdftotext']).status!==0||spawnSync('which',['unzip']).status!==0
+},()=>{
+ const w=temp(),state=path.join(w,'state'),f=path.join(w,'arabic.json');
+ const d=JSON.parse(fs.readFileSync('fixtures/example.json','utf8'));
+ d.schemaVersion='1.1.0';
+ d.language='ar';d.direction='rtl';d.summaryHeading='الملخص المهني';
+ d.candidate.name='مرشح تجريبي';d.headline='مهندس برمجيات';
+ d.summary='خبرة في تطوير الأنظمة الخلفية والخدمات';
+ d.sections[0].heading='الخبرة المهنية';
+ d.sections[0].blocks[0].heading='مهندس برمجيات';
+ d.sections[0].blocks[0].items[0].text='حسّن أداء الخدمة باستخدام تحسين الاستعلامات';
+ d.claims[0].text=d.sections[0].blocks[0].items[0].text;
+ fs.writeFileSync(f,JSON.stringify(d));
+ assert.equal(call('validate',['--file',f]).status,0);
+ assert.equal(call('approve',['--file',f,'--workspace',state,'--confirmation','APPROVED']).status,0);
+ const r=call('render',['--file',f,'--workspace',state,'--output',path.join(w,'out')]);
+ assert.ok([0,2].includes(r.status),r.stderr+r.stdout);
+ const result=JSON.parse(r.stdout);
+ assert.ok(result.files.docx,'A valid DOCX should still be available for an approval-gated partial delivery');
+ const xml=spawnSync('unzip',['-p',result.files.docx,'word/document.xml'],{encoding:'utf8'}).stdout;
+ assert.match(xml,/الملخص المهني/);assert.match(xml,/<w:bidi\/>/);
+ if(r.status===2){
+   assert.ok(result.qa?.critical,'Incomplete text extraction must be identified as a critical QA issue');
+   assert.ok(!result.files.pdf,'Failed PDF must not be exposed as a validated deliverable');
+   assert.match(result.errors.qa,/blocked/);
+ }else{
+   assert.equal(result.qa.critical,false);
+   assert.ok(result.files.pdf);
+ }
+ fs.rmSync(w,{recursive:true,force:true});
+});
+test('missing localized heading is rejected for schema v1.1',()=>{
+ const w=temp(),d=JSON.parse(fs.readFileSync('fixtures/example.json','utf8')),f=path.join(w,'ar.json');
+ d.schemaVersion='1.1.0';d.language='ar';delete d.summaryHeading;fs.writeFileSync(f,JSON.stringify(d));
+ const r=call('validate',['--file',f]);assert.notEqual(r.status,0);assert.match(r.stderr,/summaryHeading/);
+ fs.rmSync(w,{recursive:true,force:true});
+});
+
+test('resumable checkpoints and audit exports require explicit consent',()=>{
+ const root=temp(),state=path.join(root,'state'),source=path.join(root,'candidate.json');
+ fs.writeFileSync(source,JSON.stringify({stage:'interview',answered:['education'],remaining:['achievements']}));
+ assert.notEqual(call('checkpoint-save',['--file',source,'--workspace',state]).status,0);
+ assert.equal(call('checkpoint-save',['--file',source,'--workspace',state,'--confirmation','CONSENT']).status,0);
+ assert.notEqual(call('checkpoint-save',['--file',source,'--workspace',state,'--confirmation','CONSENT']).status,0);
+ const show=call('checkpoint-show',['--workspace',state]);assert.equal(show.status,0,show.stderr);
+ assert.equal(JSON.parse(show.stdout).data.stage,'interview');
+ assert.notEqual(call('checkpoint-delete',['--workspace',state]).status,0);
+ assert.equal(call('approve',['--scope','cv','--file','fixtures/example.json','--workspace',state,'--confirmation','APPROVED']).status,0);
+ const exportFile=path.join(root,'audit.json');
+ assert.notEqual(call('retain-approvals',['--workspace',state,'--file',exportFile]).status,0);
+ assert.equal(call('retain-approvals',['--workspace',state,'--file',exportFile,'--confirmation','CONSENT']).status,0);
+ assert.ok(JSON.parse(fs.readFileSync(exportFile,'utf8')).records.length>0);
+ assert.equal(call('checkpoint-delete',['--workspace',state,'--confirmation','DELETE']).status,0);
+ assert.equal(call('close',['--workspace',state,'--confirmation','CLOSE']).status,0);
+ assert.ok(fs.existsSync(exportFile));assert.ok(fs.existsSync(source));assert.ok(!fs.existsSync(state));
+ fs.rmSync(root,{recursive:true,force:true});
+});

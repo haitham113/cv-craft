@@ -1,0 +1,13 @@
+{
+  "name": "cv-craft",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22 <27"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "validate": "node scripts/cv-craft.mjs validate --file fixtures/example.json"
+  }
+}

@@ -1,0 +1,20 @@
+name: CV Craft Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22','24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: sudo apt-get update && sudo apt-get install -y weasyprint poppler-utils unzip tesseract-ocr
+      - run: npm test
