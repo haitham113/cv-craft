@@ -222,6 +222,13 @@ function main(){
    if(!result.layoutQa.ok)fail('PDF layout geometry invalid');
   }catch(e){result.errors.layoutQa=e.message;if(fs.existsSync(pdf))fs.unlinkSync(pdf);delete result.files.pdf;}
  }
+ if(result.files.docx){
+  const args=[new URL('./document-a11y-qa.mjs',import.meta.url).pathname,'--docx',docx,'--lang',data.language];
+  if(result.files.pdf)args.push('--pdf',pdf);
+  const a=spawnSync(process.execPath,args,{encoding:'utf8',timeout:30000});
+  if(a.error||a.status!==0)result.errors.accessibilityQa=a.stderr||a.error?.message||a.stdout||'Accessibility audit failed';
+  else result.accessibilityQa=JSON.parse(a.stdout);
+ }
  console.log(JSON.stringify(result,null,2));if(Object.keys(result.errors).length)process.exitCode=2;return;
  }
  if(command==='qa'){console.log(JSON.stringify(qa(opt('pdf'),opt('docx')),null,2));return;}
