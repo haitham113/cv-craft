@@ -93,7 +93,7 @@ function html(data){
    const value=style==='link'?'<a href="'+escapeXml(text)+'">'+escapeXml(text)+'</a>':(style==='bullet'?'•&#160;':'')+escapeXml(text).replace(/\n/g,'<br>');
    return '<'+tag+' class="'+style+'">'+value+'</'+tag+'>';
  }).join('');
- return '<!doctype html><html lang="'+escapeXml(data.language)+'" dir="'+(data.direction==='rtl'?'rtl':'ltr')+'"><head><meta charset="UTF-8"><style>@page{size:A4;margin:16mm}body{font-family:Arial,"DejaVu Sans",sans-serif;color:#152033;font-size:10pt;line-height:1.3}h1{font-size:21pt;margin:0}h2{font-size:12pt;border-bottom:1px solid #999;margin:12pt 0 4pt}h3{font-size:11pt;margin:8pt 0 2pt}p{margin:4pt 0}.subtitle{font-weight:bold}.contact,.meta{font-size:9pt;color:#555}.bullet{margin-inline-start:14pt}a{color:#2255aa;text-decoration:underline}</style></head><body>'+content+'</body></html>';
+ return '<!doctype html><html lang="'+escapeXml(data.language)+'" dir="'+(data.direction==='rtl'?'rtl':'ltr')+'"><head><meta charset="UTF-8"><style>@page{size:A4;margin:16mm}body{font-family:Arial,"DejaVu Sans",sans-serif;color:#152033;font-size:10pt;line-height:1.3}h1{font-size:21pt;margin:0}h2{font-size:12pt;border-bottom:1px solid #999;margin:12pt 0 4pt}h3{font-size:11pt;margin:8pt 0 2pt}p{margin:4pt 0}.subtitle{font-weight:bold}.contact,.meta{font-size:9pt;color:#555}.bullet{margin-inline-start:14pt}'+(/^ar(?:-|$)/i.test(data.language)?'body{font-feature-settings:"liga" 0,"rlig" 0}':'')+'a{color:#2255aa;text-decoration:underline}</style></head><body>'+content+'</body></html>';
 }
 function writePdf(data,dest){
  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'cv-craft-pdf-')),source=path.join(tmp,'cv.html');

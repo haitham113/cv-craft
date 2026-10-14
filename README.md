@@ -48,3 +48,7 @@ Treat suspicious-source scans as heuristic warnings (not a guarantee against pro
 ### Optional tagged-PDF output
 
 Where the installed WeasyPrint supports `--pdf-tags`, the renderer enables tagged PDF structure automatically. Older WeasyPrint versions continue to be supported but are reported as untagged by PDF layout QA. Tagging alone is **not** PDF/UA or WCAG certification, and Arabic/RTL Unicode extraction is still a release blocker.
+
+### Arabic text extraction mitigation
+
+For Arabic-language PDFs, WeasyPrint rendering now disables optional/required ligature OpenType substitutions (`liga` and `rlig`) to improve Unicode copy/paste mapping where system fonts and renderer support it. This is an experimental compatibility mitigation; it may change typography. Full visual review and extraction parity remain mandatory, and PDFs with extraction mismatches stay blocked.
