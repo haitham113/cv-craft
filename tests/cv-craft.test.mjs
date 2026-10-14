@@ -9,7 +9,7 @@ function call(action,options=[]){return spawnSync(process.execPath,[script,actio
 function temp(){return fs.mkdtempSync(path.join(os.tmpdir(),'cv-craft-test-'));}
 test('valid canonical document',()=>{const r=call('validate',['--file','fixtures/example.json']);assert.equal(r.status,0,r.stderr);});
 test('unverified fact blocked',()=>{const w=temp(),d=JSON.parse(fs.readFileSync('fixtures/example.json'));d.evidence[0].status='unverified';const f=path.join(w,'cv.json');fs.writeFileSync(f,JSON.stringify(d));assert.notEqual(call('validate',['--file',f]).status,0);fs.rmSync(w,{force:true,recursive:true});});
-test('approval hash invalidated by changes',()=>{const w=temp(),f=path.join(w,'cv.json');fs.copyFileSync('fixtures/example.json',f);assert.equal(call('approve',['--file',f,'--workspace',w,'--confirmation','APPROVED']).status,0);const d=JSON.parse(fs.readFileSync(f));d.summary+=' Changed';fs.writeFileSync(f,JSON.stringify(d));const r=call('render',['--file',f,'--workspace',w]);assert.notEqual(r.status,0);fs.rmSync(w,{force:true,recursive:true});});
+test('approval hash invalidated by changes',()=>{const w=temp(),f=path.join(w,'cv.json'),state=path.join(w,'state');fs.copyFileSync('fixtures/example.json',f);assert.equal(call('approve',['--file',f,'--workspace',state,'--confirmation','APPROVED']).status,0);const d=JSON.parse(fs.readFileSync(f));d.summary+=' Changed';fs.writeFileSync(f,JSON.stringify(d));const r=call('render',['--file',f,'--workspace',state]);assert.notEqual(r.status,0);fs.rmSync(w,{force:true,recursive:true});});
 test('verified-only fit score',()=>{const w=temp();assert.notEqual(call('score',['--file','fixtures/fit.json','--workspace',w]).status,0);assert.equal(call('approve',['--scope','weights','--file','fixtures/fit.json','--workspace',w,'--confirmation','APPROVED']).status,0);const r=call('score',['--file','fixtures/fit.json','--workspace',w]);assert.equal(r.status,0,r.stderr);const x=JSON.parse(r.stdout);assert.equal(x.fitAmongVerifiedPercent,85.71);assert.equal(x.unverifiedWeight,3);fs.rmSync(w,{force:true,recursive:true});});
 test('safe managed cleanup only',()=>{const w=temp();assert.notEqual(call('close',['--workspace',w,'--confirmation','CLOSE']).status,0);assert.equal(call('approve',['--file','fixtures/example.json','--workspace',w,'--confirmation','APPROVED']).status,0);assert.equal(call('close',['--workspace',w,'--confirmation','CLOSE']).status,0);});
 test('PDF and DOCX parse and parity', {skip:spawnSync('which',['weasyprint']).status!==0||spawnSync('which',['pdftotext']).status!==0||spawnSync('which',['unzip']).status!==0},()=>{
@@ -36,12 +36,12 @@ test('require evidence-backed statements and reference integrity',()=>{
  fs.rmSync(w,{recursive:true,force:true});
 });
 test('versioned schema migration creates backup and invalidates prior approval',()=>{
- const w=temp(),f=path.join(w,'cv.json');fs.copyFileSync('fixtures/example.json',f);
- assert.equal(call('approve',['--file',f,'--workspace',w,'--confirmation','APPROVED']).status,0);
- const r=call('migrate',['--file',f]);assert.equal(r.status,0,r.stderr);
+ const w=temp(),f=path.join(w,'cv.json'),state=path.join(w,'state');fs.copyFileSync('fixtures/example.json',f);
+ assert.equal(call('approve',['--file',f,'--workspace',state,'--confirmation','APPROVED']).status,0);
+ const r=call('migrate',['--file',f,'--workspace',state]);assert.equal(r.status,0,r.stderr);
  const report=JSON.parse(r.stdout);assert.equal(report.to,'1.1.0');assert.ok(fs.existsSync(report.backup));
  assert.equal(JSON.parse(fs.readFileSync(f,'utf8')).schemaVersion,'1.1.0');
- assert.notEqual(call('render',['--file',f,'--workspace',w,'--output',path.join(w,'out')]).status,0);
+ assert.notEqual(call('render',['--file',f,'--workspace',state,'--output',path.join(w,'out')]).status,0);
  fs.rmSync(w,{recursive:true,force:true});
 });
 test('fit evaluation rejects verified requirements without evidence',()=>{
@@ -53,10 +53,10 @@ test('fit evaluation rejects verified requirements without evidence',()=>{
 test('external hyperlinks are real DOCX relationships and safe PDF anchors',{
  skip:spawnSync('which',['weasyprint']).status!==0||spawnSync('which',['pdftotext']).status!==0||spawnSync('which',['unzip']).status!==0
 },()=>{
- const w=temp(),f=path.join(w,'cv.json'),cv=JSON.parse(fs.readFileSync('fixtures/example.json','utf8'));
+ const w=temp(),f=path.join(w,'cv.json'),state=path.join(w,'state'),cv=JSON.parse(fs.readFileSync('fixtures/example.json','utf8'));
  cv.candidate.links=['https://example.org/portfolio'];fs.writeFileSync(f,JSON.stringify(cv));
- assert.equal(call('approve',['--file',f,'--workspace',w,'--confirmation','APPROVED']).status,0);
- const r=call('render',['--file',f,'--workspace',w,'--output',path.join(w,'out')]);
+ assert.equal(call('approve',['--file',f,'--workspace',state,'--confirmation','APPROVED']).status,0);
+ const r=call('render',['--file',f,'--workspace',state,'--output',path.join(w,'out')]);
  assert.equal(r.status,0,r.stderr+r.stdout);
  const doc=JSON.parse(r.stdout).files.docx;
  const xml=spawnSync('unzip',['-p',doc,'word/document.xml'],{encoding:'utf8'}).stdout;
@@ -64,5 +64,31 @@ test('external hyperlinks are real DOCX relationships and safe PDF anchors',{
  assert.match(xml,/w:hyperlink r:id="cvlink1"/);
  assert.match(rel,/TargetMode="External"/);
  assert.match(rel,/https:\/\/example.org\/portfolio/);
+ fs.rmSync(w,{recursive:true,force:true});
+});
+
+test('doctor reports capability status without installing dependencies',()=>{
+ const r=call('doctor');assert.equal(r.status,0,r.stderr);const d=JSON.parse(r.stdout);
+ assert.ok(d.node);assert.ok(Array.isArray(d.tools));assert.ok(Array.isArray(d.missing));
+});
+test('privacy-safe migration backups are deleted on explicit workflow close',()=>{
+ const w=temp(),f=path.join(w,'source.json'),state=path.join(w,'managed');
+ fs.copyFileSync('fixtures/example.json',f);
+ assert.equal(call('migrate',['--file',f,'--workspace',state]).status,0);
+ const entries=fs.readdirSync(path.join(state,'backups'));
+ assert.equal(entries.length,1);assert.ok(fs.existsSync(f));
+ assert.equal(call('close',['--workspace',state,'--confirmation','CLOSE']).status,0);
+ assert.ok(fs.existsSync(f));assert.ok(!fs.existsSync(state));
+ fs.rmSync(w,{recursive:true,force:true});
+});
+test('workspace cannot be a symlink or an existing unmanaged directory',()=>{
+ const w=temp(),outside=path.join(w,'external');fs.mkdirSync(outside);
+ fs.writeFileSync(path.join(outside,'unrelated.txt'),'keep');
+ const link=path.join(w,'link');fs.symlinkSync(outside,link);
+ for(const target of [outside,link]){
+  const r=call('approve',['--file','fixtures/example.json','--workspace',target,'--confirmation','APPROVED']);
+  assert.notEqual(r.status,0,'Must refuse unsafe target '+target);
+ }
+ assert.equal(fs.readFileSync(path.join(outside,'unrelated.txt'),'utf8'),'keep');
  fs.rmSync(w,{recursive:true,force:true});
 });

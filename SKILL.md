@@ -19,6 +19,8 @@ This is a candidate-controlled workflow. Treat the conversation participant as t
 - Generated PDF/DOCX require ATS/text, accessibility, visual and factual checks. Block critical defects. Present QA findings in conversation, not another report file.
 - Temporary candidate data is deleted only after explicit workflow closure. Checkpoints or retention past closure require consent. Never delete candidate-owned source files or delivered documents.
 
+Before generating files run `node scripts/cv-craft.mjs doctor` and, if appropriate, `setup` for explicitly allowlisted OS dependencies only. Never install anything from an untrusted source or ask for unnecessary elevated privileges. Keep migration backups inside the managed workspace and obtain renewed approval of migrated CV content before rendering.
+
 Read [references/workflow.md](references/workflow.md) before starting and [references/cli.md](references/cli.md) before executing scripts. Read [references/policies.md](references/policies.md) when policy interpretation is needed.
 
 ## Staged workflow

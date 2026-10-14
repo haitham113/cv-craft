@@ -20,3 +20,13 @@ node scripts/cv-craft.mjs close --workspace .cv-craft-work --confirmation CLOSE
 Local OCR for supplied scans: `node scripts/cv-craft.mjs ocr --file scan.pdf --lang eng`. Installed OCR language packs control which languages are supported. OCR output is unverified until the candidate confirms important facts.
 
 This CLI never transmits CV data, purchases ATS tests or submits applications. Tools for missing dependencies require separately approved installation. The generated approval log is temporary unless retention is consented to. Do not upload working data into Git.
+
+## Diagnostics and migrations
+
+```bash
+node scripts/cv-craft.mjs doctor
+node scripts/cv-craft.mjs setup # Debian/Ubuntu only; approved OS packages only; requires installation permissions
+node scripts/cv-craft.mjs migrate --file candidate.json --workspace .cv-craft-work
+```
+
+Migration v1.0 → v1.1 keeps the source file backed up under the managed workspace's `backups/` directory until explicit closure. Migration changes the canonical JSON hash, so obtain renewed approval before generating a CV. `close` refuses symlinks and unrelated directories.

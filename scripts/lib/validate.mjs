@@ -74,14 +74,17 @@ export function validateFit(data){
  for(const r of data.requirements)if(['met','partially_met'].includes(r.status)&&!r.evidenceIds?.length)throw Error('Verified requirement needs evidence IDs: '+r.id);
  return {valid:true,schemaValidated:true,requirements:data.requirements.length};
 }
-export function migrateFile(file){
+export function migrateFile(file,managedWorkspace){
+ if(!managedWorkspace)throw Error('Managed workspace required for privacy-preserving migration backups');
  const full=path.resolve(file),raw=fs.readFileSync(full),original=JSON.parse(raw);
  if(original.schemaVersion==='1.1.0'){validateCV(original);return {migrated:false,version:'1.1.0'};}
  if(original.schemaVersion!=='1.0.0')throw Error('No migration path from '+original.schemaVersion);
  validateCV(original);
  const updated={...original,schemaVersion:'1.1.0'};
  validateCV(updated);
- const backup=full+'.bak-v1.0.0-'+new Date().toISOString().replace(/[:.]/g,'-');
+ const backupDir=path.join(managedWorkspace,'backups');
+ fs.mkdirSync(backupDir,{recursive:true,mode:0o700});
+ const backup=path.join(backupDir,path.basename(full)+'.bak-v1.0.0-'+new Date().toISOString().replace(/[:.]/g,'-'));
  const temporary=full+'.migrating-'+process.pid+'.tmp';
  try{
   fs.writeFileSync(backup,raw,{flag:'wx',mode:0o600});

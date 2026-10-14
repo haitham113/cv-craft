@@ -17,7 +17,19 @@ function safe(x){return String(x||'general').normalize('NFKD').replace(/[^a-zA-Z
 function cmd(exe,args,timeout=45000){const r=spawnSync(exe,args,{encoding:'utf8',timeout,maxBuffer:32000000});if(r.error||r.status!==0)fail(exe+': '+(r.error?.message||r.stderr||r.stdout||r.status));return r.stdout||'';}
 function available(exe){return spawnSync('which',[exe]).status===0;}
 function folder(p){fs.mkdirSync(p,{recursive:true,mode:0o700});}
-function workspace(){const p=path.resolve(opt('workspace','.cv-craft-work'));folder(p);try{fs.chmodSync(p,0o700);}catch{}return p;}
+function workspace(){
+ const p=path.resolve(opt('workspace','.cv-craft-work'));
+ if([path.parse(p).root,process.cwd(),os.homedir()].includes(p))fail('Unsafe managed workspace path');
+ if(fs.existsSync(p)&&fs.lstatSync(p).isSymbolicLink())fail('Workspace symlinks are prohibited');
+ if(fs.existsSync(p)){
+  const existing=fs.readdirSync(p).filter(x=>!['approvals.json','checkpoint.json','.cv-craft-managed','backups'].includes(x));
+  if(existing.length||(!fs.existsSync(path.join(p,'.cv-craft-managed'))&&!fs.existsSync(path.join(p,'approvals.json'))&&fs.readdirSync(p).length))fail('Refusing to take ownership of unrecognized directory');
+ }
+ folder(p);fs.chmodSync(p,0o700);
+ const mark=path.join(p,'.cv-craft-managed');
+ if(!fs.existsSync(mark))fs.writeFileSync(mark,'CV Craft managed workspace\n',{flag:'wx',mode:0o600});
+ return p;
+}
 function approvals(w){const p=path.join(w,'approvals.json');return fs.existsSync(p)?read(p):{version:1,records:[]};}
 function authorized(w,scope,data){return approvals(w).records.some(x=>x.scope===scope&&x.contentHash===digest(data));}
 function ids(items,label){const s=new Set();for(const x of items){if(!x.id||s.has(x.id))fail('Duplicate or missing '+label+' ID: '+x.id);s.add(x.id);}return s;}
@@ -113,7 +125,25 @@ function score(data){
  }
  return {requirements:data.requirements,totalWeight:total,verifiedWeight:verified,unverifiedWeight:unknown,assessedCoveragePercent:+(verified/total*100).toFixed(2),fitAmongVerifiedPercent:verified?+(earned/verified*100).toFixed(2):null,mandatoryGaps:data.requirements.filter(x=>x.mandatory&&x.status==='not_met').map(x=>x.id),note:'Internal evidence assessment, NOT an ATS score or interview probability'};
 }
+function dependencyReport(){
+ const manifest=read(new URL('../config/dependencies.json',import.meta.url));
+ const tools=manifest.packages.map(x=>({package:x.name,executables:x.executables,available:x.executables.every(available),installable:process.platform==='linux'&&available('apt-get')}));
+ return {platform:process.platform,arch:process.arch,node:process.versions.node,tools,missing:tools.filter(x=>!x.available).map(x=>x.package),pdfRenderer:available('weasyprint')?'weasyprint':available('chromium')?'chromium (fallback; requires sandbox review)':null};
+}
+function installApproved(){
+ const report=dependencyReport();
+ if(!report.missing.length){console.log(JSON.stringify({installed:[],report},null,2));return;}
+ if(process.platform!=='linux'||!available('apt-get')||process.getuid?.()!==0)fail('Missing approved tools: '+report.missing.join(', ')+'; automatic setup requires root on Debian/Ubuntu');
+ const manifest=read(new URL('../config/dependencies.json',import.meta.url));
+ const pkgs=manifest.packages.filter(x=>report.missing.includes(x.name)).map(x=>x.apt);
+ if(!pkgs.every(x=>/^[a-z0-9+.-]+$/.test(x)))fail('Untrusted package name in approved manifest');
+ cmd('apt-get',['update'],120000);
+ cmd('apt-get',['install','--yes','--no-install-recommends',...pkgs],180000);
+ console.log(JSON.stringify({installed:pkgs,report:dependencyReport()},null,2));
+}
 function main(){
+ if(command==='doctor'){console.log(JSON.stringify(dependencyReport(),null,2));return;}
+ if(command==='setup'){installApproved();return;}
  const file=opt('file'),w=opt('workspace','.cv-craft-work');
  if(command==='validate'){console.log(JSON.stringify(validate(read(file)),null,2));return;}
  if(command==='approve'){
@@ -141,7 +171,7 @@ function main(){
  }
  if(command==='qa'){console.log(JSON.stringify(qa(opt('pdf'),opt('docx')),null,2));return;}
  if(command==='inspect'){const p=workspace();console.log(JSON.stringify({workspace:p,approvals:approvals(p).records},null,2));return;}
- if(command==='migrate'){console.log(JSON.stringify(migrateFile(file),null,2));return;}
+ if(command==='migrate'){console.log(JSON.stringify(migrateFile(file,workspace()),null,2));return;}
  if(command==='ocr'){
  if(!available('tesseract'))fail('Approved Tesseract is unavailable');
  let inputs=[file],tmp=fs.mkdtempSync(path.join(os.tmpdir(),'cv-craft-ocr-'));
@@ -152,10 +182,23 @@ function main(){
  if(command==='close'){
  if(opt('confirmation')!=='CLOSE')fail('Explicit close confirmation required');
  const p=path.resolve(w);
- if(!fs.existsSync(path.join(p,'approvals.json'))||p===path.resolve('.')||p==='/')fail('Not a recognized managed workspace');
- for(const f of fs.readdirSync(p))if(!['approvals.json','checkpoint.json'].includes(f))fail('Unmanaged file prevents cleanup: '+f);
- fs.rmSync(p,{recursive:true,force:true});console.log('Temporary managed workflow closed; source and delivered files preserved');return;
+ if([path.parse(p).root,process.cwd(),os.homedir()].includes(p))fail('Unsafe cleanup path');
+ if(!fs.existsSync(p)||fs.lstatSync(p).isSymbolicLink()||!fs.existsSync(path.join(p,'.cv-craft-managed')))fail('Workspace not explicitly managed');
+ const allowed=new Set(['approvals.json','checkpoint.json','.cv-craft-managed','backups']);
+ for(const name of fs.readdirSync(p)){
+  if(!allowed.has(name))fail('Unmanaged file prevents cleanup: '+name);
+  const f=path.join(p,name);if(fs.lstatSync(f).isSymbolicLink())fail('Symlink blocks cleanup: '+name);
  }
- fail('Usage: cv-craft validate|approve|render|qa|score|ocr|inspect|migrate|close --file FILE [--workspace DIR]');
+ const backups=path.join(p,'backups');
+ if(fs.existsSync(backups)){
+  if(!fs.lstatSync(backups).isDirectory())fail('Backup path is not a directory');
+  for(const name of fs.readdirSync(backups)){
+   if(!/^[^/]+\.bak-v1\.0\.0-\d{4}-/.test(name)||!fs.lstatSync(path.join(backups,name)).isFile())fail('Unexpected backup file blocks cleanup: '+name);
+  }
+ }
+ fs.rmSync(p,{recursive:true,force:true});
+ console.log('Managed temporary workspace deleted on explicit closure; delivered and source documents untouched');return;
+ }
+ fail('Usage: cv-craft doctor|setup|validate|approve|render|qa|score|ocr|inspect|migrate|close --file FILE [--workspace DIR]');
 }
 try{main();}catch(e){console.error('CV Craft: '+e.message);process.exitCode=1;}

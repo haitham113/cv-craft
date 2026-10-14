@@ -1,0 +1,35 @@
+{
+  "description": "Predeclared, approved Debian/Ubuntu OS packages used by CV Craft. No third-party install scripts.",
+  "platform": "linux-debian",
+  "packages": [
+    {
+      "name": "weasyprint",
+      "executables": [
+        "weasyprint"
+      ],
+      "apt": "weasyprint"
+    },
+    {
+      "name": "poppler-utils",
+      "executables": [
+        "pdftotext",
+        "pdftoppm"
+      ],
+      "apt": "poppler-utils"
+    },
+    {
+      "name": "unzip",
+      "executables": [
+        "unzip"
+      ],
+      "apt": "unzip"
+    },
+    {
+      "name": "tesseract-ocr",
+      "executables": [
+        "tesseract"
+      ],
+      "apt": "tesseract-ocr"
+    }
+  ]
+}
