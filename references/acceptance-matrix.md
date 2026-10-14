@@ -120,3 +120,9 @@ A further **automation and regression hardening pass** added:
 - Symlink-based installation smoke tests for user-wide and project-local Codex skill directories. **Real automatic skill-selection is not tested.**
 
 **Conservative status remains RELEASE_NOT_READY.** This round provides more unit/integration evidence but does not yet change the original 85-decision status counts. The unresolved blocker work is primarily environment-specific: RTL PDF extraction and visual reading order across multiple fonts, full assistive-technology accessibility review, genuine Codex employer-research/interview workflows, and owner-run local activation and visual acceptance. The production release requires a further formal evidence review and explicit signoff.
+
+### English Word/PDF styling hardening evidence
+
+Synthetic DOCX QA now covers real OOXML numbering, bullet hanging indents, A4 pages, semantic heading borders and typography spacing. A LibreOffice-based regression converts DOCX to PDF and checks page counts, bullets, selectable content and relative layout height against the direct PDF. This responds to the initial English Ali Ahmed acceptance feedback (missing bullet markers and compressed DOCX hierarchy).
+
+The code change is included in Draft PR #2; the **human visual comparison and owner acceptance of the regenerated files remain outstanding**. This is not sufficient evidence to change the overall production-release status.
