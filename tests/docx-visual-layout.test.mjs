@@ -53,7 +53,7 @@ function geometry(pdf){
  const info=run('pdfinfo',[pdf]);assert.equal(info.status,0,info.stderr);
  const pages=Number(info.stdout.match(/^Pages:\s*(\d+)/m)?.[1]);
  const bbox=run('pdftotext',['-bbox',pdf,'-']);assert.equal(bbox.status,0,bbox.stderr);
- const ys=[...bbox.stdout.matchAll(/<word\s+[^>]*yMin="([\d.]+)"\s+yMax="([\d.]+)"/g)].map(m=>[+m[1],+m[2]]);
+ const ys=[...bbox.stdout.matchAll(/<word\s+([^>]+)>/g)].map(m=>{const lo=Number(m[1].match(/\byMin="([\d.]+)"/)?.[1]);const hi=Number(m[1].match(/\byMax="([\d.]+)"/)?.[1]);return [lo,hi];}).filter(v=>Number.isFinite(v[0])&&Number.isFinite(v[1]));
  assert.ok(ys.length>20,'Selectable text required');
  return {pages,span:Math.max(...ys.map(v=>v[1]))-Math.min(...ys.map(v=>v[0])),pageSize:info.stdout.match(/^Page size:\s*(.*)$/m)?.[1]};
 }
