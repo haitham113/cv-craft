@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import {validateCV,validateFit,migrateFile} from './lib/validate.mjs';
 import {assessTextParity} from './lib/text-parity.mjs';
+import {auditWorkflow} from './lib/workflow-gates.mjs';
 import {spawnSync} from 'node:child_process';
 
 const argv=process.argv.slice(2), command=argv.shift();
@@ -144,6 +145,13 @@ function installApproved(){
  console.log(JSON.stringify({installed:pkgs,report:dependencyReport()},null,2));
 }
 function main(){
+ if(command==='audit-workflow'){
+  const journal=read(opt('file'));
+  const report=auditWorkflow(journal,{expectedContentHash:opt('expected-content-hash')});
+  console.log(JSON.stringify(report,null,2));
+  if(!report.ok)process.exitCode=2;
+  return;
+ }
  if(command==='doctor'){console.log(JSON.stringify(dependencyReport(),null,2));return;}
  if(command==='setup'){installApproved();return;}
  const file=opt('file'),w=opt('workspace','.cv-craft-work');
@@ -197,7 +205,8 @@ function main(){
  console.log(JSON.stringify(score(data),null,2));return;
  }
  if(command==='render'){
- const data=read(file);validate(data);if(!authorized(workspace(),'cv',data))fail('CV content changed since approval or approval missing');
+ const data=read(file);validate(data);
+ if(opt('journal')){const report=auditWorkflow(read(opt('journal')),{expectedContentHash:digest(data)});if(!report.ok)fail('Workflow approval journal failed: '+report.problems.join('; '));}if(!authorized(workspace(),'cv',data))fail('CV content changed since approval or approval missing');
  const out=path.resolve(opt('output','cv-craft-output'));folder(out);
  const base=safe(data.candidate.name)+'-'+safe(data.targetRole||'general-cv');
  let v=1;while(fs.existsSync(path.join(out,base+'-v'+v+'.docx'))||fs.existsSync(path.join(out,base+'-v'+v+'.pdf')))v++;
@@ -245,6 +254,6 @@ function main(){
  fs.rmSync(p,{recursive:true,force:true});
  console.log('Managed temporary workspace deleted on explicit closure; delivered and source documents untouched');return;
  }
- fail('Usage: cv-craft doctor|setup|validate|approve|render|qa|score|ocr|inspect|migrate|checkpoint-save|checkpoint-show|checkpoint-delete|retain-approvals|close --file FILE [--workspace DIR]');
+ fail('Usage: cv-craft audit-workflow|doctor|setup|validate|approve|render|qa|score|ocr|inspect|migrate|checkpoint-save|checkpoint-show|checkpoint-delete|retain-approvals|close --file FILE [--workspace DIR]');
 }
 try{main();}catch(e){console.error('CV Craft: '+e.message);process.exitCode=1;}
