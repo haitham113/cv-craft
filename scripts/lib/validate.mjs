@@ -49,6 +49,7 @@ export function validateCV(data){
  const file=data?.schemaVersion==='1.0.0'?'cv-v1.schema.json':data?.schemaVersion==='1.1.0'?'cv-v1.1.schema.json':null;
  if(!file)throw Error('Unsupported CV schema version '+data?.schemaVersion);
  apply(data,file);
+ if(data.schemaVersion==='1.1.0'&&!/^en(?:-|$)/i.test(data.language)&&!data.summaryHeading?.trim())throw Error('Non-English CV requires a localized summaryHeading');
  const cs=ids(data.claims,'claim'),es=ids(data.evidence,'evidence');ids(data.sections,'section');
  const em=new Map(data.evidence.map(x=>[x.id,x])),used=new Set();
  for(const e of data.evidence)if(e.status==='candidate_approved_estimate'&&!e.qualifier)throw Error('Estimate missing qualifier: '+e.id);

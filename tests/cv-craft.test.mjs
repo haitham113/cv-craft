@@ -92,3 +92,33 @@ test('workspace cannot be a symlink or an existing unmanaged directory',()=>{
  assert.equal(fs.readFileSync(path.join(outside,'unrelated.txt'),'utf8'),'keep');
  fs.rmSync(w,{recursive:true,force:true});
 });
+
+test('localized Arabic RTL CV retains approved heading and document content',{
+ skip:spawnSync('which',['weasyprint']).status!==0||spawnSync('which',['pdftotext']).status!==0||spawnSync('which',['unzip']).status!==0
+},()=>{
+ const w=temp(),state=path.join(w,'state'),f=path.join(w,'arabic.json');
+ const d=JSON.parse(fs.readFileSync('fixtures/example.json','utf8'));
+ d.schemaVersion='1.1.0';
+ d.language='ar';d.direction='rtl';d.summaryHeading='الملخص المهني';
+ d.candidate.name='مرشح تجريبي';d.headline='مهندس برمجيات';
+ d.summary='خبرة في تطوير الأنظمة الخلفية والخدمات';
+ d.sections[0].heading='الخبرة المهنية';
+ d.sections[0].blocks[0].heading='مهندس برمجيات';
+ d.sections[0].blocks[0].items[0].text='حسّن أداء الخدمة باستخدام تحسين الاستعلامات';
+ d.claims[0].text=d.sections[0].blocks[0].items[0].text;
+ fs.writeFileSync(f,JSON.stringify(d));
+ assert.equal(call('validate',['--file',f]).status,0);
+ assert.equal(call('approve',['--file',f,'--workspace',state,'--confirmation','APPROVED']).status,0);
+ const r=call('render',['--file',f,'--workspace',state,'--output',path.join(w,'out')]);
+ assert.equal(r.status,0,r.stderr+r.stdout);
+ const result=JSON.parse(r.stdout),xml=spawnSync('unzip',['-p',result.files.docx,'word/document.xml'],{encoding:'utf8'}).stdout;
+ assert.match(xml,/الملخص المهني/);assert.match(xml,/<w:bidi\/>/);
+ assert.ok(!result.qa.critical,JSON.stringify(result.qa));
+ fs.rmSync(w,{recursive:true,force:true});
+});
+test('missing localized heading is rejected for schema v1.1',()=>{
+ const w=temp(),d=JSON.parse(fs.readFileSync('fixtures/example.json','utf8')),f=path.join(w,'ar.json');
+ d.schemaVersion='1.1.0';d.language='ar';delete d.summaryHeading;fs.writeFileSync(f,JSON.stringify(d));
+ const r=call('validate',['--file',f]);assert.notEqual(r.status,0);assert.match(r.stderr,/summaryHeading/);
+ fs.rmSync(w,{recursive:true,force:true});
+});

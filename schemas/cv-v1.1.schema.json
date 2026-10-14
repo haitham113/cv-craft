@@ -57,6 +57,10 @@
       "items": {
         "$ref": "#/$defs/evidence"
       }
+    },
+    "summaryHeading": {
+      "type": "string",
+      "minLength": 1
     }
   },
   "additionalProperties": false,

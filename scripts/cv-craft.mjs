@@ -39,7 +39,7 @@ function rows(data){
  const contact=[data.candidate.email,data.candidate.phone,data.candidate.location].filter(Boolean).join(' | ');
  if(contact)r.push(['contact',contact]);
  for(const url of data.candidate.links||[])r.push(['link',url]);
- r.push(['h2','Professional Summary'],['normal',data.summary]);
+ r.push(['h2',data.summaryHeading||'Professional Summary'],['normal',data.summary]);
  for(const section of data.sections){r.push(['h2',section.heading]);for(const b of section.blocks){
  if(b.kind==='text')r.push(['normal',b.text||'']);
  if(b.kind==='entry'){r.push(['h3',b.heading||'']);if(b.subtitle||b.meta)r.push(['meta',[b.subtitle,b.meta].filter(Boolean).join(' | ')])}
