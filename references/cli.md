@@ -50,3 +50,7 @@ node scripts/cv-craft.mjs retain-approvals --workspace .cv-craft-work --file /pr
 ```
 
 Do not commit candidate data, approval exports, or checkpoint files to Git.
+
+## OCR acceptance
+
+Synthetic scanned-CV regression tests use the approved local Tesseract executable. OCR is only an extraction method: candidate verification remains required for important details such as names, dates, job titles, qualifications, and performance metrics. Do not treat OCR confidence or text similarity as independent evidence of the candidate's claims.
