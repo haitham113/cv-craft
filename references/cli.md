@@ -30,3 +30,23 @@ node scripts/cv-craft.mjs migrate --file candidate.json --workspace .cv-craft-wo
 ```
 
 Migration v1.0 → v1.1 keeps the source file backed up under the managed workspace's `backups/` directory until explicit closure. Migration changes the canonical JSON hash, so obtain renewed approval before generating a CV. `close` refuses symlinks and unrelated directories.
+
+## Consent-based checkpoints and approval retention
+
+Checkpoint snapshots are **not** saved automatically. After the candidate expressly consents, store one JSON object containing the interview stage and verified evidence:
+
+```bash
+node scripts/cv-craft.mjs checkpoint-save --file workflow-state.json --workspace .cv-craft-work --confirmation CONSENT
+node scripts/cv-craft.mjs checkpoint-show --workspace .cv-craft-work
+node scripts/cv-craft.mjs checkpoint-delete --workspace .cv-craft-work --confirmation DELETE
+```
+
+Replace an existing checkpoint by explicitly deleting it and asking for renewed consent before saving. The managed workspace is deleted only on explicit closure.
+
+To retain the structured approvals separately after closure, obtain explicit candidate consent and export outside the managed workspace:
+
+```bash
+node scripts/cv-craft.mjs retain-approvals --workspace .cv-craft-work --file /private/path/approvals.json --confirmation CONSENT
+```
+
+Do not commit candidate data, approval exports, or checkpoint files to Git.

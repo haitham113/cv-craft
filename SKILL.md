@@ -17,7 +17,7 @@ This is a candidate-controlled workflow. Treat the conversation participant as t
 - Require explicit approval at every workflow gate. Previously approved CV content cannot change, **even cosmetically**, without renewed approval.
 - Keep claim-level source evidence, avoid unsupported claims and respect confidentiality. Sensitive personal details are excluded by default.
 - Generated PDF/DOCX require ATS/text, accessibility, visual and factual checks. Block critical defects. Present QA findings in conversation, not another report file.
-- Temporary candidate data is deleted only after explicit workflow closure. Checkpoints or retention past closure require consent. Never delete candidate-owned source files or delivered documents.
+- Consent-based resumable snapshots use `checkpoint-save` only after explicit permission; `checkpoint-show` and `checkpoint-delete` provide candidate inspection/removal. Persistent approval records require `retain-approvals` with consent. Temporary candidate data is deleted only after explicit workflow closure. Checkpoints or retention past closure require consent. Never delete candidate-owned source files or delivered documents.
 
 Before generating files run `node scripts/cv-craft.mjs doctor` and, if appropriate, `setup` for explicitly allowlisted OS dependencies only. Never install anything from an untrusted source or ask for unnecessary elevated privileges. Keep migration backups inside the managed workspace and obtain renewed approval of migrated CV content before rendering.
 

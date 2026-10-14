@@ -145,6 +145,42 @@ function main(){
  if(command==='doctor'){console.log(JSON.stringify(dependencyReport(),null,2));return;}
  if(command==='setup'){installApproved();return;}
  const file=opt('file'),w=opt('workspace','.cv-craft-work');
+ 
+ if(command==='checkpoint-save'){
+  if(opt('confirmation')!=='CONSENT')fail('Explicit candidate consent required to save a resumable checkpoint');
+  const data=read(file);
+  if(!data||typeof data!=='object'||Array.isArray(data))fail('Checkpoint must be a JSON object');
+  const serialized=JSON.stringify({version:1,createdAt:new Date().toISOString(),sha256:digest(data),data},null,2);
+  if(Buffer.byteLength(serialized)>2_000_000)fail('Checkpoint too large; refuse oversized personal-data snapshot');
+  const f=path.join(workspace(),'checkpoint.json');
+  if(fs.existsSync(f))fail('Checkpoint already exists. Delete it with explicit consent before replacing.');
+  fs.writeFileSync(f,serialized,{flag:'wx',mode:0o600});
+  console.log(JSON.stringify({saved:true,checkpointHash:digest(data),note:'Managed temporary data; closes only upon candidate request'}));return;
+ }
+ if(command==='checkpoint-show'){
+  const f=path.join(workspace(),'checkpoint.json');
+  if(!fs.existsSync(f))fail('No saved checkpoint');
+  if(fs.lstatSync(f).isSymbolicLink())fail('Checkpoint symlink is forbidden');
+  const record=read(f);
+  if(digest(record.data)!==record.sha256)fail('Checkpoint failed integrity verification');
+  console.log(JSON.stringify(record,null,2));return;
+ }
+ if(command==='checkpoint-delete'){
+  if(opt('confirmation')!=='DELETE')fail('Explicit candidate deletion approval required');
+  const f=path.join(workspace(),'checkpoint.json');
+  if(!fs.existsSync(f))fail('No saved checkpoint');
+  fs.unlinkSync(f);console.log('Managed resumable checkpoint deleted');return;
+ }
+ if(command==='retain-approvals'){
+  if(opt('confirmation')!=='CONSENT')fail('Explicit candidate consent required to retain approval records');
+  if(!file)fail('--file is required for consent-based export');
+  const w=workspace(),dest=path.resolve(file);
+  if(dest===w||dest.startsWith(w+path.sep))fail('Persistent export must be outside temporary workspace');
+  const data={exportedAt:new Date().toISOString(),candidateConsentAttested:true,records:approvals(w).records};
+  fs.writeFileSync(dest,JSON.stringify(data,null,2)+'\n',{flag:'wx',mode:0o600});
+  console.log(JSON.stringify({exported:true,records:data.records.length,path:dest}));return;
+ }
+
  if(command==='validate'){console.log(JSON.stringify(validate(read(file)),null,2));return;}
  if(command==='approve'){
  if(opt('confirmation')!=='APPROVED')fail('Explicit candidate confirmation required');
@@ -199,6 +235,6 @@ function main(){
  fs.rmSync(p,{recursive:true,force:true});
  console.log('Managed temporary workspace deleted on explicit closure; delivered and source documents untouched');return;
  }
- fail('Usage: cv-craft doctor|setup|validate|approve|render|qa|score|ocr|inspect|migrate|close --file FILE [--workspace DIR]');
+ fail('Usage: cv-craft doctor|setup|validate|approve|render|qa|score|ocr|inspect|migrate|checkpoint-save|checkpoint-show|checkpoint-delete|retain-approvals|close --file FILE [--workspace DIR]');
 }
 try{main();}catch(e){console.error('CV Craft: '+e.message);process.exitCode=1;}

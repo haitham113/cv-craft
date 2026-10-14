@@ -131,3 +131,23 @@ test('missing localized heading is rejected for schema v1.1',()=>{
  const r=call('validate',['--file',f]);assert.notEqual(r.status,0);assert.match(r.stderr,/summaryHeading/);
  fs.rmSync(w,{recursive:true,force:true});
 });
+
+test('resumable checkpoints and audit exports require explicit consent',()=>{
+ const root=temp(),state=path.join(root,'state'),source=path.join(root,'candidate.json');
+ fs.writeFileSync(source,JSON.stringify({stage:'interview',answered:['education'],remaining:['achievements']}));
+ assert.notEqual(call('checkpoint-save',['--file',source,'--workspace',state]).status,0);
+ assert.equal(call('checkpoint-save',['--file',source,'--workspace',state,'--confirmation','CONSENT']).status,0);
+ assert.notEqual(call('checkpoint-save',['--file',source,'--workspace',state,'--confirmation','CONSENT']).status,0);
+ const show=call('checkpoint-show',['--workspace',state]);assert.equal(show.status,0,show.stderr);
+ assert.equal(JSON.parse(show.stdout).data.stage,'interview');
+ assert.notEqual(call('checkpoint-delete',['--workspace',state]).status,0);
+ assert.equal(call('approve',['--scope','cv','--file','fixtures/example.json','--workspace',state,'--confirmation','APPROVED']).status,0);
+ const exportFile=path.join(root,'audit.json');
+ assert.notEqual(call('retain-approvals',['--workspace',state,'--file',exportFile]).status,0);
+ assert.equal(call('retain-approvals',['--workspace',state,'--file',exportFile,'--confirmation','CONSENT']).status,0);
+ assert.ok(JSON.parse(fs.readFileSync(exportFile,'utf8')).records.length>0);
+ assert.equal(call('checkpoint-delete',['--workspace',state,'--confirmation','DELETE']).status,0);
+ assert.equal(call('close',['--workspace',state,'--confirmation','CLOSE']).status,0);
+ assert.ok(fs.existsSync(exportFile));assert.ok(fs.existsSync(source));assert.ok(!fs.existsSync(state));
+ fs.rmSync(root,{recursive:true,force:true});
+});
