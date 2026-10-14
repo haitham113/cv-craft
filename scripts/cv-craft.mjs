@@ -90,10 +90,10 @@ function writeDocx(data,file){
 function html(data){
  const content=rows(data).map(([style,text])=>{
    const tag=style==='title'?'h1':style==='h2'?'h2':style==='h3'?'h3':'p';
-   const value=style==='link'?'<a href="'+escapeXml(text)+'">'+escapeXml(text)+'</a>':escapeXml(text).replace(/\n/g,'<br>');
+   const value=style==='link'?'<a href="'+escapeXml(text)+'">'+escapeXml(text)+'</a>':(style==='bullet'?'•&#160;':'')+escapeXml(text).replace(/\n/g,'<br>');
    return '<'+tag+' class="'+style+'">'+value+'</'+tag+'>';
  }).join('');
- return '<!doctype html><html lang="'+escapeXml(data.language)+'" dir="'+(data.direction==='rtl'?'rtl':'ltr')+'"><head><meta charset="UTF-8"><style>@page{size:A4;margin:16mm}body{font-family:Arial,"DejaVu Sans",sans-serif;color:#152033;font-size:10pt;line-height:1.3}h1{font-size:21pt;margin:0}h2{font-size:12pt;border-bottom:1px solid #999;margin:12pt 0 4pt}h3{font-size:11pt;margin:8pt 0 2pt}p{margin:4pt 0}.subtitle{font-weight:bold}.contact,.meta{font-size:9pt;color:#555}.bullet{padding-inline-start:14pt}.bullet:before{content:"• "}a{color:#2255aa;text-decoration:underline}</style></head><body>'+content+'</body></html>';
+ return '<!doctype html><html lang="'+escapeXml(data.language)+'" dir="'+(data.direction==='rtl'?'rtl':'ltr')+'"><head><meta charset="UTF-8"><style>@page{size:A4;margin:16mm}body{font-family:Arial,"DejaVu Sans",sans-serif;color:#152033;font-size:10pt;line-height:1.3}h1{font-size:21pt;margin:0}h2{font-size:12pt;border-bottom:1px solid #999;margin:12pt 0 4pt}h3{font-size:11pt;margin:8pt 0 2pt}p{margin:4pt 0}.subtitle{font-weight:bold}.contact,.meta{font-size:9pt;color:#555}.bullet{margin-inline-start:14pt}a{color:#2255aa;text-decoration:underline}</style></head><body>'+content+'</body></html>';
 }
 function writePdf(data,dest){
  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'cv-craft-pdf-')),source=path.join(tmp,'cv.html');
@@ -203,6 +203,14 @@ function main(){
  try{writeDocx(data,docx);result.files.docx=docx;}catch(e){result.errors.docx=e.message;}
  try{writePdf(data,pdf);result.files.pdf=pdf;}catch(e){result.errors.pdf=e.message;}
  if(result.files.docx&&result.files.pdf)try{result.qa=qa(pdf,docx);if(result.qa.critical){result.errors.qa='Critical PDF/DOCX text extraction mismatch; PDF blocked';fs.unlinkSync(pdf);delete result.files.pdf;result.errors.pdf='Removed PDF that did not pass text validation';}}catch(e){result.errors.qa=e.message;}
+ if(result.files.pdf){
+  try{
+   const layout=spawnSync(process.execPath,[new URL('./pdf-layout-qa.mjs',import.meta.url).pathname,'--pdf',pdf],{encoding:'utf8',timeout:30000});
+   if(layout.error||layout.status!==0)fail('PDF layout QA failed: '+(layout.stderr||layout.error?.message||layout.stdout));
+   result.layoutQa=JSON.parse(layout.stdout);
+   if(!result.layoutQa.ok)fail('PDF layout geometry invalid');
+  }catch(e){result.errors.layoutQa=e.message;if(fs.existsSync(pdf))fs.unlinkSync(pdf);delete result.files.pdf;}
+ }
  console.log(JSON.stringify(result,null,2));if(Object.keys(result.errors).length)process.exitCode=2;return;
  }
  if(command==='qa'){console.log(JSON.stringify(qa(opt('pdf'),opt('docx')),null,2));return;}

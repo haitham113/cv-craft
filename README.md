@@ -31,3 +31,16 @@ Generated PDF/DOCX should undergo visual inspection for each language. Local par
 ### RTL PDF known limitation
 
 Arabic and other right-to-left PDFs may render visually but extract Unicode words incorrectly with some PDF engines and system fonts. The text-parity quality gate blocks such PDFs and removes them from validated output. Only a validated DOCX may be offered **after explicit candidate approval for partial delivery**. Do not claim full multilingual PDF support until a rendering backend passes the RTL tests and visual review.
+
+## Acceptance and security QA
+
+```bash
+npm test
+node scripts/scan-untrusted.mjs --file job-description.txt
+node scripts/pdf-layout-qa.mjs --pdf candidate.pdf --preview-dir .cv-craft-work/previews
+```
+
+Treat suspicious-source scans as heuristic warnings (not a guarantee against prompt injection). The PDF QA tool checks page bounds, readability and blank pages; its private PNG previews **require manual visual review**. PDF tagging and full screen-reader accessibility are not certified. Review the [85-decision acceptance matrix](references/acceptance-matrix.md) before any release.
+
+**Release status:** DEVELOPMENT, NOT READY. Multilingual PDF extraction and accessibility remain blockers. No merge without explicit owner approval.
+
