@@ -33,7 +33,7 @@ test('DOCX contains actual numbered bullet definitions, hanging indents and sepa
    styles=unpack(file,'word/styles.xml'),
    numbering=unpack(file,'word/numbering.xml'),
    relationships=unpack(file,'word/_rels/document.xml.rels'),
-   types=unpack(file,'[Content_Types].xml');
+   entries=run('unzip',['-Z1',file]).stdout;
   assert.match(numbering,/<w:numFmt w:val="bullet"\/>/);
   assert.match(numbering,/<w:lvlText w:val="•"\/>/);
   assert.match(numbering,/<w:ind w:left="420" w:hanging="230"\/>/);
@@ -44,7 +44,8 @@ test('DOCX contains actual numbered bullet definitions, hanging indents and sepa
   assert.match(styles,/w:styleId="Heading3"/);
   assert.match(styles,/w:keepNext\/>/,'Prevent orphan headings');
   assert.match(relationships,/relationships\/numbering" Target="numbering.xml"/);
-  assert.match(types,/\/word\/numbering.xml/);
+  assert.match(entries,/^word\/numbering.xml$/m);
+  assert.match(entries,/^\[Content_Types\]\.xml$/m);
   assert.equal(run('unzip',['-t',file]).status,0);
   assert.equal(result.qa.critical,false);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
