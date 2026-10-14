@@ -5,6 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import {validateCV,validateFit,migrateFile} from './lib/validate.mjs';
+import {assessTextParity} from './lib/text-parity.mjs';
 import {spawnSync} from 'node:child_process';
 
 const argv=process.argv.slice(2), command=argv.shift();
@@ -105,14 +106,15 @@ function writePdf(data,dest){
  if(!fs.existsSync(dest)||fs.statSync(dest).size<100)fail('PDF output missing');
  }finally{fs.rmSync(tmp,{recursive:true,force:true});}
 }
-function qa(pdf,docx){
+function qa(pdf,docx,direction='ltr'){
  if(!available('pdftotext')||!available('unzip'))fail('QA needs pdftotext and unzip');
- const p=cmd('pdftotext',['-layout',pdf,'-']);
+ const pdfText=cmd('pdftotext',['-layout',pdf,'-']);
  const xml=cmd('unzip',['-p',docx,'word/document.xml']);
- const d=xml.replace(/<\/w:p>/g,'\n').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"');
- const norm=x=>x.normalize('NFKC').replace(/[\s\p{P}]+/gu,' ').toLowerCase();
- const pt=norm(p),dt=norm(d),terms=dt.split(' ').filter(x=>x.length>2),missing=terms.filter(x=>!pt.includes(x));
- return {pdfTextCharacters:p.length,docxTextCharacters:d.length,missingUniqueTokens:[...new Set(missing)].slice(0,15),critical:p.length<30||d.length<30||missing.length>terms.length*.2};
+ const docxText=xml.replace(/<\/w:p>/g,'\n')
+  .replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<')
+  .replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+ const score=assessTextParity(pdfText,docxText,{direction});
+ return {pdfTextCharacters:pdfText.length,docxTextCharacters:docxText.length,...score};
 }
 function score(data){
  validateFit(data);
@@ -202,7 +204,7 @@ function main(){
  const docx=path.join(out,base+'-v'+v+'.docx'),pdf=path.join(out,base+'-v'+v+'.pdf'),result={version:v,files:{},errors:{}};
  try{writeDocx(data,docx);result.files.docx=docx;}catch(e){result.errors.docx=e.message;}
  try{writePdf(data,pdf);result.files.pdf=pdf;}catch(e){result.errors.pdf=e.message;}
- if(result.files.docx&&result.files.pdf)try{result.qa=qa(pdf,docx);if(result.qa.critical){result.errors.qa='Critical PDF/DOCX text extraction mismatch; PDF blocked';fs.unlinkSync(pdf);delete result.files.pdf;result.errors.pdf='Removed PDF that did not pass text validation';}}catch(e){result.errors.qa=e.message;}
+ if(result.files.docx&&result.files.pdf)try{result.qa=qa(pdf,docx,data.direction||'ltr');if(result.qa.critical){result.errors.qa='Critical PDF/DOCX text extraction mismatch; PDF blocked';fs.unlinkSync(pdf);delete result.files.pdf;result.errors.pdf='Removed PDF that did not pass text validation';}}catch(e){result.errors.qa=e.message;}
  if(result.files.pdf){
   try{
    const layout=spawnSync(process.execPath,[new URL('./pdf-layout-qa.mjs',import.meta.url).pathname,'--pdf',pdf],{encoding:'utf8',timeout:30000});
