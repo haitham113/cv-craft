@@ -93,7 +93,7 @@ test('workspace cannot be a symlink or an existing unmanaged directory',()=>{
  fs.rmSync(w,{recursive:true,force:true});
 });
 
-test('localized Arabic RTL CV retains approved heading and document content',{
+test('Arabic RTL CV retains localized content and blocks unsafe PDF when extraction differs',{
  skip:spawnSync('which',['weasyprint']).status!==0||spawnSync('which',['pdftotext']).status!==0||spawnSync('which',['unzip']).status!==0
 },()=>{
  const w=temp(),state=path.join(w,'state'),f=path.join(w,'arabic.json');
@@ -110,10 +110,19 @@ test('localized Arabic RTL CV retains approved heading and document content',{
  assert.equal(call('validate',['--file',f]).status,0);
  assert.equal(call('approve',['--file',f,'--workspace',state,'--confirmation','APPROVED']).status,0);
  const r=call('render',['--file',f,'--workspace',state,'--output',path.join(w,'out')]);
- assert.equal(r.status,0,r.stderr+r.stdout);
- const result=JSON.parse(r.stdout),xml=spawnSync('unzip',['-p',result.files.docx,'word/document.xml'],{encoding:'utf8'}).stdout;
+ assert.ok([0,2].includes(r.status),r.stderr+r.stdout);
+ const result=JSON.parse(r.stdout);
+ assert.ok(result.files.docx,'A valid DOCX should still be available for an approval-gated partial delivery');
+ const xml=spawnSync('unzip',['-p',result.files.docx,'word/document.xml'],{encoding:'utf8'}).stdout;
  assert.match(xml,/الملخص المهني/);assert.match(xml,/<w:bidi\/>/);
- assert.ok(!result.qa.critical,JSON.stringify(result.qa));
+ if(r.status===2){
+   assert.ok(result.qa?.critical,'Incomplete text extraction must be identified as a critical QA issue');
+   assert.ok(!result.files.pdf,'Failed PDF must not be exposed as a validated deliverable');
+   assert.match(result.errors.qa,/blocked/);
+ }else{
+   assert.equal(result.qa.critical,false);
+   assert.ok(result.files.pdf);
+ }
  fs.rmSync(w,{recursive:true,force:true});
 });
 test('missing localized heading is rejected for schema v1.1',()=>{

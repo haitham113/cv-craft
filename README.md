@@ -27,3 +27,7 @@ CV data uses schema v1.1 (`schemas/cv-v1.1.schema.json`), with validation of v1.
 ## Current development limitations
 
 Generated PDF/DOCX should undergo visual inspection for each language. Local parsing is a compatibility check, not an ATS certification. External ATS tests, when available, must be free and require consent for complete CV uploads. OCR languages depend on installed language packs. Unsupported schema migrations fail closed instead of guessing.
+
+### RTL PDF known limitation
+
+Arabic and other right-to-left PDFs may render visually but extract Unicode words incorrectly with some PDF engines and system fonts. The text-parity quality gate blocks such PDFs and removes them from validated output. Only a validated DOCX may be offered **after explicit candidate approval for partial delivery**. Do not claim full multilingual PDF support until a rendering backend passes the RTL tests and visual review.

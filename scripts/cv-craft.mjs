@@ -166,7 +166,7 @@ function main(){
  const docx=path.join(out,base+'-v'+v+'.docx'),pdf=path.join(out,base+'-v'+v+'.pdf'),result={version:v,files:{},errors:{}};
  try{writeDocx(data,docx);result.files.docx=docx;}catch(e){result.errors.docx=e.message;}
  try{writePdf(data,pdf);result.files.pdf=pdf;}catch(e){result.errors.pdf=e.message;}
- if(result.files.docx&&result.files.pdf)try{result.qa=qa(pdf,docx);if(result.qa.critical)result.errors.qa='Critical text parity issue';}catch(e){result.errors.qa=e.message;}
+ if(result.files.docx&&result.files.pdf)try{result.qa=qa(pdf,docx);if(result.qa.critical){result.errors.qa='Critical PDF/DOCX text extraction mismatch; PDF blocked';fs.unlinkSync(pdf);delete result.files.pdf;result.errors.pdf='Removed PDF that did not pass text validation';}}catch(e){result.errors.qa=e.message;}
  console.log(JSON.stringify(result,null,2));if(Object.keys(result.errors).length)process.exitCode=2;return;
  }
  if(command==='qa'){console.log(JSON.stringify(qa(opt('pdf'),opt('docx')),null,2));return;}
