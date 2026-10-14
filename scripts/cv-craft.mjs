@@ -1,0 +1,161 @@
+#!/usr/bin/env node
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import zlib from 'node:zlib';
+import {spawnSync} from 'node:child_process';
+
+const argv=process.argv.slice(2), command=argv.shift();
+function opt(key,def){const i=argv.indexOf('--'+key);return i<0?def:argv[i+1];}
+function fail(message){throw Error(message);}
+function read(file){return JSON.parse(fs.readFileSync(file,'utf8'));}
+function digest(data){return crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');}
+function escapeXml(x){return String(x??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function safe(x){return String(x||'general').normalize('NFKD').replace(/[^a-zA-Z0-9_-]/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'').slice(0,60)||'general';}
+function cmd(exe,args,timeout=45000){const r=spawnSync(exe,args,{encoding:'utf8',timeout,maxBuffer:32000000});if(r.error||r.status!==0)fail(exe+': '+(r.error?.message||r.stderr||r.stdout||r.status));return r.stdout||'';}
+function available(exe){return spawnSync('which',[exe]).status===0;}
+function folder(p){fs.mkdirSync(p,{recursive:true,mode:0o700});}
+function workspace(){const p=path.resolve(opt('workspace','.cv-craft-work'));folder(p);try{fs.chmodSync(p,0o700);}catch{}return p;}
+function approvals(w){const p=path.join(w,'approvals.json');return fs.existsSync(p)?read(p):{version:1,records:[]};}
+function authorized(w,scope,data){return approvals(w).records.some(x=>x.scope===scope&&x.contentHash===digest(data));}
+function ids(items,label){const s=new Set();for(const x of items){if(!x.id||s.has(x.id))fail('Duplicate or missing '+label+' ID: '+x.id);s.add(x.id);}return s;}
+function validate(data){
+ if(data.schemaVersion!=='1.0.0')fail('Unsupported schema version');
+ if(!data.candidate?.name||!data.language||!data.headline||!data.summary)fail('Candidate name, language, headline and summary are required');
+ if(!Array.isArray(data.sections)||!data.sections.length||!Array.isArray(data.claims)||!Array.isArray(data.evidence))fail('Invalid canonical CV arrays');
+ ids(data.sections,'section');
+ const cs=ids(data.claims,'claim'),es=ids(data.evidence,'evidence');
+ for(const e of data.evidence){if(!e.source||!['documented','candidate_confirmed','candidate_approved_estimate','unverified'].includes(e.status))fail('Invalid evidence: '+e.id);if(e.status==='candidate_approved_estimate'&&!e.qualifier)fail('Approximate metric requires qualifier: '+e.id);}
+ for(const c of data.claims){if(!c.text||!Array.isArray(c.evidenceIds)||!c.evidenceIds.length)fail('Missing claim evidence: '+c.id);for(const id of c.evidenceIds){if(!es.has(id))fail('Missing evidence ID: '+id);if(data.evidence.find(e=>e.id===id).status==='unverified')fail('Unsupported claim: '+c.id);}}
+ const checkRef=item=>{for(const id of item.claimIds||[])if(!cs.has(id))fail('Missing claim ID: '+id);};
+ for(const section of data.sections){if(!section.heading||!Array.isArray(section.blocks))fail('Invalid section: '+section.id);for(const b of section.blocks){if(!['text','entry','skills','bullets'].includes(b.kind))fail('Invalid block kind');checkRef(b);for(const item of b.items||[])checkRef(item);}}
+ return {valid:true,claims:data.claims.length,evidence:data.evidence.length,sections:data.sections.length};
+}
+function rows(data){
+ const r=[['title',data.candidate.name],['subtitle',data.headline]];
+ const contact=[data.candidate.email,data.candidate.phone,data.candidate.location,...(data.candidate.links||[])].filter(Boolean).join(' | ');
+ if(contact)r.push(['contact',contact]);
+ r.push(['h2','Professional Summary'],['normal',data.summary]);
+ for(const section of data.sections){r.push(['h2',section.heading]);for(const b of section.blocks){
+ if(b.kind==='text')r.push(['normal',b.text||'']);
+ if(b.kind==='entry'){r.push(['h3',b.heading||'']);if(b.subtitle||b.meta)r.push(['meta',[b.subtitle,b.meta].filter(Boolean).join(' | ')])}
+ if(b.kind==='skills')for(const g of b.groups||[])r.push(['normal',g.label+': '+g.items.join(', ')]);
+ for(const item of b.items||[])r.push(['bullet',item.text]);
+ }}
+ return r;
+}
+const table=Array.from({length:256},(_,i)=>{let c=i;for(let j=0;j<8;j++)c=c&1?0xedb88320^(c>>>1):c>>>1;return c>>>0;});
+function crc(bytes){let c=0xffffffff;for(const x of bytes)c=table[(c^x)&255]^(c>>>8);return(c^0xffffffff)>>>0;}
+function zip(files){
+ const heads=[],centers=[];let offset=0;
+ for(const [name,content] of Object.entries(files)){
+ const filename=Buffer.from(name),raw=Buffer.from(content),data=zlib.deflateRawSync(raw),checksum=crc(raw);
+ const local=Buffer.alloc(30);local.writeUInt32LE(0x04034b50);local.writeUInt16LE(20,4);local.writeUInt16LE(0x800,6);local.writeUInt16LE(8,8);local.writeUInt32LE(checksum,14);local.writeUInt32LE(data.length,18);local.writeUInt32LE(raw.length,22);local.writeUInt16LE(filename.length,26);
+ heads.push(local,filename,data);
+ const central=Buffer.alloc(46);central.writeUInt32LE(0x02014b50);central.writeUInt16LE(20,4);central.writeUInt16LE(20,6);central.writeUInt16LE(0x800,8);central.writeUInt16LE(8,10);central.writeUInt32LE(checksum,16);central.writeUInt32LE(data.length,20);central.writeUInt32LE(raw.length,24);central.writeUInt16LE(filename.length,28);central.writeUInt32LE(offset,42);
+ centers.push(central,filename);offset+=local.length+filename.length+data.length;
+ }
+ const c=Buffer.concat(centers),end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(Object.keys(files).length,8);end.writeUInt16LE(Object.keys(files).length,10);end.writeUInt32LE(c.length,12);end.writeUInt32LE(offset,16);
+ return Buffer.concat([...heads,c,end]);
+}
+function writeDocx(data,file){
+ const rtl=data.direction==='rtl';
+ const paragraphs=rows(data).map(([style,text])=>{
+ const styleId=({title:'Title',subtitle:'Subtitle',contact:'Contact',h2:'Heading2',h3:'Heading3',meta:'Meta',bullet:'Bullet'})[style]||'Normal';
+ return '<w:p><w:pPr><w:pStyle w:val="'+styleId+'"/>'+(rtl?'<w:bidi/>':'')+'</w:pPr><w:r>'+(rtl?'<w:rPr><w:rtl/></w:rPr>':'')+'<w:t xml:space="preserve">'+escapeXml(text)+'</w:t></w:r></w:p>';
+ }).join('');
+ const doc='<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+paragraphs+'<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="900" w:bottom="900" w:left="900" w:right="900"/></w:sectPr></w:body></w:document>';
+ const styles=['Normal','Title','Subtitle','Contact','Heading2','Heading3','Meta','Bullet'].map((s,i)=>'<w:style w:type="paragraph" w:styleId="'+s+'"><w:name w:val="'+s+'"/>'+(i===4?'<w:pPr><w:outlineLvl w:val="1"/></w:pPr>':i===5?'<w:pPr><w:outlineLvl w:val="2"/></w:pPr>':'')+'<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="'+([22,36,24,19,26,23,19,21][i])+'"/></w:rPr></w:style>').join('');
+ const files={
+ '[Content_Types].xml':'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>',
+ '_rels/.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+ 'word/_rels/document.xml.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>',
+ 'word/document.xml':doc,
+ 'word/styles.xml':'<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+styles+'</w:styles>'
+ };
+ fs.writeFileSync(file,zip(files));
+}
+function html(data){
+ const content=rows(data).map(([style,text])=>{
+ const tag=style==='title'?'h1':style==='h2'?'h2':style==='h3'?'h3':'p';
+ return '<'+tag+' class="'+style+'">'+escapeXml(text).replace(/\n/g,'<br>')+'</'+tag+'>';
+ }).join('');
+ return '<!doctype html><html lang="'+escapeXml(data.language)+'" dir="'+(data.direction==='rtl'?'rtl':'ltr')+'"><head><meta charset="UTF-8"><style>@page{size:A4;margin:16mm}body{font-family:Arial,"DejaVu Sans",sans-serif;color:#152033;font-size:10pt;line-height:1.3}h1{font-size:21pt;margin:0}h2{font-size:12pt;border-bottom:1px solid #999;margin:12pt 0 4pt}h3{font-size:11pt;margin:8pt 0 2pt}p{margin:4pt 0}.subtitle{font-weight:bold}.contact,.meta{font-size:9pt;color:#555}.bullet{padding-inline-start:14pt}.bullet:before{content:"• "}</style></head><body>'+content+'</body></html>';
+}
+function writePdf(data,dest){
+ const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'cv-craft-pdf-')),source=path.join(tmp,'cv.html');
+ fs.writeFileSync(source,html(data));
+ try{
+ if(available('weasyprint'))cmd('weasyprint',[source,dest]);
+ else if(available('chromium'))cmd('chromium',['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--no-pdf-header-footer','--print-to-pdf='+dest,'file://'+source]);
+ else fail('Approved PDF generator unavailable; need weasyprint or chromium');
+ if(!fs.existsSync(dest)||fs.statSync(dest).size<100)fail('PDF output missing');
+ }finally{fs.rmSync(tmp,{recursive:true,force:true});}
+}
+function qa(pdf,docx){
+ if(!available('pdftotext')||!available('unzip'))fail('QA needs pdftotext and unzip');
+ const p=cmd('pdftotext',['-layout',pdf,'-']);
+ const xml=cmd('unzip',['-p',docx,'word/document.xml']);
+ const d=xml.replace(/<\/w:p>/g,'\n').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"');
+ const norm=x=>x.normalize('NFKC').replace(/[\s\p{P}]+/gu,' ').toLowerCase();
+ const pt=norm(p),dt=norm(d),terms=dt.split(' ').filter(x=>x.length>2),missing=terms.filter(x=>!pt.includes(x));
+ return {pdfTextCharacters:p.length,docxTextCharacters:d.length,missingUniqueTokens:[...new Set(missing)].slice(0,15),critical:p.length<30||d.length<30||missing.length>terms.length*.2};
+}
+function score(data){
+ if(!Array.isArray(data.requirements)||!data.requirements.length)fail('No requirements');
+ ids(data.requirements,'requirement');
+ let total=0,verified=0,earned=0,unknown=0;
+ for(const r of data.requirements){
+ if(!(r.weight>0)||!Number.isFinite(r.weight)||!['met','partially_met','not_met','unverified'].includes(r.status))fail('Invalid fit requirement: '+r.id);
+ total+=r.weight;
+ if(r.status==='unverified')unknown+=r.weight;else {verified+=r.weight;earned+=r.weight*({met:1,partially_met:.5,not_met:0})[r.status];}
+ }
+ return {requirements:data.requirements,totalWeight:total,verifiedWeight:verified,unverifiedWeight:unknown,assessedCoveragePercent:+(verified/total*100).toFixed(2),fitAmongVerifiedPercent:verified?+(earned/verified*100).toFixed(2):null,mandatoryGaps:data.requirements.filter(x=>x.mandatory&&x.status==='not_met').map(x=>x.id),note:'Internal evidence assessment, NOT an ATS score or interview probability'};
+}
+function main(){
+ const file=opt('file'),w=opt('workspace','.cv-craft-work');
+ if(command==='validate'){console.log(JSON.stringify(validate(read(file)),null,2));return;}
+ if(command==='approve'){
+ if(opt('confirmation')!=='APPROVED')fail('Explicit candidate confirmation required');
+ const scope=opt('scope','cv'),data=read(file);
+ if(scope==='cv')validate(data);else if(scope==='weights')score(data);else fail('Unknown approval scope');
+ const p=workspace(),s=approvals(p);s.records.push({scope,contentHash:digest(data),at:new Date().toISOString(),note:'Candidate approval attested in current conversation'});
+ fs.writeFileSync(path.join(p,'approvals.json'),JSON.stringify(s,null,2),{mode:0o600});
+ console.log(JSON.stringify({approved:true,scope,contentHash:digest(data)}));return;
+ }
+ if(command==='score'){
+ const data=read(file);if(!authorized(workspace(),'weights',data))fail('Approved adaptive weights not found for this version');
+ console.log(JSON.stringify(score(data),null,2));return;
+ }
+ if(command==='render'){
+ const data=read(file);validate(data);if(!authorized(workspace(),'cv',data))fail('CV content changed since approval or approval missing');
+ const out=path.resolve(opt('output','cv-craft-output'));folder(out);
+ const base=safe(data.candidate.name)+'-'+safe(data.targetRole||'general-cv');
+ let v=1;while(fs.existsSync(path.join(out,base+'-v'+v+'.docx'))||fs.existsSync(path.join(out,base+'-v'+v+'.pdf')))v++;
+ const docx=path.join(out,base+'-v'+v+'.docx'),pdf=path.join(out,base+'-v'+v+'.pdf'),result={version:v,files:{},errors:{}};
+ try{writeDocx(data,docx);result.files.docx=docx;}catch(e){result.errors.docx=e.message;}
+ try{writePdf(data,pdf);result.files.pdf=pdf;}catch(e){result.errors.pdf=e.message;}
+ if(result.files.docx&&result.files.pdf)try{result.qa=qa(pdf,docx);if(result.qa.critical)result.errors.qa='Critical text parity issue';}catch(e){result.errors.qa=e.message;}
+ console.log(JSON.stringify(result,null,2));if(Object.keys(result.errors).length)process.exitCode=2;return;
+ }
+ if(command==='qa'){console.log(JSON.stringify(qa(opt('pdf'),opt('docx')),null,2));return;}
+ if(command==='inspect'){const p=workspace();console.log(JSON.stringify({workspace:p,approvals:approvals(p).records},null,2));return;}
+ if(command==='migrate'){const data=read(file);if(data.schemaVersion==='1.0.0'){validate(data);console.log('Already v1.0.0');return;}fail('Unknown schema version; refusing unsafe migration');}
+ if(command==='ocr'){
+ if(!available('tesseract'))fail('Approved Tesseract is unavailable');
+ let inputs=[file],tmp=fs.mkdtempSync(path.join(os.tmpdir(),'cv-craft-ocr-'));
+ try{if(/\.pdf$/i.test(file)){if(!available('pdftoppm'))fail('pdftoppm unavailable');cmd('pdftoppm',['-f','1','-l','12','-r','200','-png',file,path.join(tmp,'page')],90000);inputs=fs.readdirSync(tmp).filter(x=>x.endsWith('.png')).sort().map(x=>path.join(tmp,x));}
+ for(const input of inputs)process.stdout.write(cmd('tesseract',[input,'stdout','-l',opt('lang','eng')],60000));
+ }finally{fs.rmSync(tmp,{recursive:true,force:true});}return;
+ }
+ if(command==='close'){
+ if(opt('confirmation')!=='CLOSE')fail('Explicit close confirmation required');
+ const p=path.resolve(w);
+ if(!fs.existsSync(path.join(p,'approvals.json'))||p===path.resolve('.')||p==='/')fail('Not a recognized managed workspace');
+ for(const f of fs.readdirSync(p))if(!['approvals.json','checkpoint.json'].includes(f))fail('Unmanaged file prevents cleanup: '+f);
+ fs.rmSync(p,{recursive:true,force:true});console.log('Temporary managed workflow closed; source and delivered files preserved');return;
+ }
+ fail('Usage: cv-craft validate|approve|render|qa|score|ocr|inspect|migrate|close --file FILE [--workspace DIR]');
+}
+try{main();}catch(e){console.error('CV Craft: '+e.message);process.exitCode=1;}

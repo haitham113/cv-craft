@@ -1,0 +1,71 @@
+{
+  "schemaVersion": "1.0.0",
+  "candidate": {
+    "name": "Sample Candidate",
+    "email": "sample@example.invalid",
+    "location": "Cairo",
+    "links": []
+  },
+  "language": "en",
+  "direction": "ltr",
+  "targetRole": "Backend Engineer",
+  "headline": "Backend Engineer",
+  "summary": "Engineer with experience delivering reliable backend services.",
+  "sections": [
+    {
+      "id": "experience",
+      "heading": "Experience",
+      "blocks": [
+        {
+          "kind": "entry",
+          "heading": "Backend Engineer",
+          "subtitle": "Example Organization",
+          "meta": "2023–2025",
+          "items": [
+            {
+              "text": "Improved API response time by approximately 20% using query optimization.",
+              "claimIds": [
+                "c1"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "skills",
+      "heading": "Skills",
+      "blocks": [
+        {
+          "kind": "skills",
+          "groups": [
+            {
+              "label": "Languages",
+              "items": [
+                "JavaScript",
+                "SQL"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "id": "c1",
+      "text": "Improved API response time by approximately 20% using query optimization.",
+      "evidenceIds": [
+        "e1"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "source": "Candidate-approved estimate based on production measurement",
+      "status": "candidate_approved_estimate",
+      "qualifier": "approximately"
+    }
+  ]
+}

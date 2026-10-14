@@ -1,0 +1,34 @@
+{
+  "requirements": [
+    {
+      "id": "r1",
+      "requirement": "Node.js",
+      "weight": 5,
+      "status": "met",
+      "mandatory": true,
+      "evidenceIds": [
+        "e1"
+      ],
+      "rationale": "Primary platform"
+    },
+    {
+      "id": "r2",
+      "requirement": "Kubernetes",
+      "weight": 3,
+      "status": "unverified",
+      "mandatory": false,
+      "rationale": "Preferred skill"
+    },
+    {
+      "id": "r3",
+      "requirement": "SQL",
+      "weight": 2,
+      "status": "partially_met",
+      "mandatory": false,
+      "evidenceIds": [
+        "e1"
+      ],
+      "rationale": "Secondary skill"
+    }
+  ]
+}

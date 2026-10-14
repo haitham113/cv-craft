@@ -1,0 +1,7 @@
+node_modules/
+.cv-craft-work/
+cv-craft-output/
+output/
+*.pdf
+*.docx
+.DS_Store

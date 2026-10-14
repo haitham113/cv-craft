@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "requirements"
+  ],
+  "properties": {
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "requirement",
+          "weight",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "requirement": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "status": {
+            "enum": [
+              "met",
+              "partially_met",
+              "not_met",
+              "unverified"
+            ]
+          },
+          "mandatory": {
+            "type": "boolean"
+          },
+          "evidenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rationale": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
