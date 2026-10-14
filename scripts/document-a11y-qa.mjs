@@ -16,6 +16,20 @@ function main(){
  const documentXml=external('unzip',['-p',docx,'word/document.xml']);
  const stylesXml=external('unzip',['-p',docx,'word/styles.xml']);
  const relXml=external('unzip',['-p',docx,'word/_rels/document.xml.rels']);
+ const bulletParagraphs=(documentXml.match(/<w:pStyle w:val="Bullet"\/>/g)||[]).length;
+ const numberedParagraphs=(documentXml.match(/<w:numPr>/g)||[]).length;
+ if(bulletParagraphs>0){
+  if(numberedParagraphs!==bulletParagraphs)problems.push('Bulleted experience paragraphs lack real Word numbering');
+  if(!names.includes('word/numbering.xml'))problems.push('Missing OOXML numbering part');
+  else{
+   const numberingXml=external('unzip',['-p',docx,'word/numbering.xml']);
+   if(!numberingXml.includes('<w:numFmt w:val="bullet"/>')||!numberingXml.includes('w:hanging='))problems.push('Invalid Word bullet numbering or hanging indent');
+  }
+  if(!relXml.includes('/relationships/numbering'))problems.push('Word numbering relationship missing');
+ }
+ if(!documentXml.includes('<w:pgSz w:w="11906" w:h="16838"/>'))problems.push('Document page size is not A4');
+ if(!stylesXml.includes('<w:pBdr><w:bottom'))warnings.push('Section-heading bottom rules not detected; visually review hierarchy');
+
  if(!documentXml.includes('<w:document')||!documentXml.includes('<w:body'))problems.push('DOCX has no recognized semantic document body');
  if(!documentXml.includes('w:pStyle w:val="Heading2"'))problems.push('No semantic section headings');
  if(!stylesXml.includes('w:outlineLvl w:val="1"'))problems.push('Heading levels are not semantically outlined');
@@ -42,6 +56,7 @@ function main(){
  warnings.push('Human reading-order, visual appearance and assistive-technology checks still required');
  const result={ok:problems.length===0,document:'docx'+(pdf?'+pdf':''),language,
   headingsDetected:(documentXml.match(/w:pStyle w:val="Heading2"/g)||[]).length,
+  bulletParagraphs,numberedParagraphs,
   hyperlinksDetected:hyperlinks,pdfTagged:tagged,rtl,problems,warnings,
   compliantWithWCAGorPDFUA:'not_assessed'};
  console.log(JSON.stringify(result,null,2));
