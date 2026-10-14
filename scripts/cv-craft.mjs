@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
+import {validateCV,validateFit,migrateFile} from './lib/validate.mjs';
 import {spawnSync} from 'node:child_process';
 
 const argv=process.argv.slice(2), command=argv.shift();
@@ -20,22 +21,12 @@ function workspace(){const p=path.resolve(opt('workspace','.cv-craft-work'));fol
 function approvals(w){const p=path.join(w,'approvals.json');return fs.existsSync(p)?read(p):{version:1,records:[]};}
 function authorized(w,scope,data){return approvals(w).records.some(x=>x.scope===scope&&x.contentHash===digest(data));}
 function ids(items,label){const s=new Set();for(const x of items){if(!x.id||s.has(x.id))fail('Duplicate or missing '+label+' ID: '+x.id);s.add(x.id);}return s;}
-function validate(data){
- if(data.schemaVersion!=='1.0.0')fail('Unsupported schema version');
- if(!data.candidate?.name||!data.language||!data.headline||!data.summary)fail('Candidate name, language, headline and summary are required');
- if(!Array.isArray(data.sections)||!data.sections.length||!Array.isArray(data.claims)||!Array.isArray(data.evidence))fail('Invalid canonical CV arrays');
- ids(data.sections,'section');
- const cs=ids(data.claims,'claim'),es=ids(data.evidence,'evidence');
- for(const e of data.evidence){if(!e.source||!['documented','candidate_confirmed','candidate_approved_estimate','unverified'].includes(e.status))fail('Invalid evidence: '+e.id);if(e.status==='candidate_approved_estimate'&&!e.qualifier)fail('Approximate metric requires qualifier: '+e.id);}
- for(const c of data.claims){if(!c.text||!Array.isArray(c.evidenceIds)||!c.evidenceIds.length)fail('Missing claim evidence: '+c.id);for(const id of c.evidenceIds){if(!es.has(id))fail('Missing evidence ID: '+id);if(data.evidence.find(e=>e.id===id).status==='unverified')fail('Unsupported claim: '+c.id);}}
- const checkRef=item=>{for(const id of item.claimIds||[])if(!cs.has(id))fail('Missing claim ID: '+id);};
- for(const section of data.sections){if(!section.heading||!Array.isArray(section.blocks))fail('Invalid section: '+section.id);for(const b of section.blocks){if(!['text','entry','skills','bullets'].includes(b.kind))fail('Invalid block kind');checkRef(b);for(const item of b.items||[])checkRef(item);}}
- return {valid:true,claims:data.claims.length,evidence:data.evidence.length,sections:data.sections.length};
-}
+function validate(data){return validateCV(data);}
 function rows(data){
  const r=[['title',data.candidate.name],['subtitle',data.headline]];
- const contact=[data.candidate.email,data.candidate.phone,data.candidate.location,...(data.candidate.links||[])].filter(Boolean).join(' | ');
+ const contact=[data.candidate.email,data.candidate.phone,data.candidate.location].filter(Boolean).join(' | ');
  if(contact)r.push(['contact',contact]);
+ for(const url of data.candidate.links||[])r.push(['link',url]);
  r.push(['h2','Professional Summary'],['normal',data.summary]);
  for(const section of data.sections){r.push(['h2',section.heading]);for(const b of section.blocks){
  if(b.kind==='text')r.push(['normal',b.text||'']);
@@ -61,27 +52,36 @@ function zip(files){
 }
 function writeDocx(data,file){
  const rtl=data.direction==='rtl';
+ const linkRels=[];let linkIndex=0;
  const paragraphs=rows(data).map(([style,text])=>{
- const styleId=({title:'Title',subtitle:'Subtitle',contact:'Contact',h2:'Heading2',h3:'Heading3',meta:'Meta',bullet:'Bullet'})[style]||'Normal';
- return '<w:p><w:pPr><w:pStyle w:val="'+styleId+'"/>'+(rtl?'<w:bidi/>':'')+'</w:pPr><w:r>'+(rtl?'<w:rPr><w:rtl/></w:rPr>':'')+'<w:t xml:space="preserve">'+escapeXml(text)+'</w:t></w:r></w:p>';
+   const styleId=({title:'Title',subtitle:'Subtitle',contact:'Contact',link:'Normal',h2:'Heading2',h3:'Heading3',meta:'Meta',bullet:'Bullet'})[style]||'Normal';
+   const para='<w:pPr><w:pStyle w:val="'+styleId+'"/>'+(rtl?'<w:bidi/>':'')+'</w:pPr>';
+   const run=(value,link=false)=>'<w:r><w:rPr>'+(rtl?'<w:rtl/>':'')+(link?'<w:rStyle w:val="Hyperlink"/>':'')+'</w:rPr><w:t xml:space="preserve">'+escapeXml(value)+'</w:t></w:r>';
+   if(style==='link'){
+     const id='cvlink'+(++linkIndex);
+     linkRels.push('<Relationship Id="'+id+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="'+escapeXml(text)+'" TargetMode="External"/>');
+     return '<w:p>'+para+'<w:hyperlink r:id="'+id+'" w:history="1">'+run(text,true)+'</w:hyperlink></w:p>';
+   }
+   return '<w:p>'+para+String(text).split('\n').map((part,i)=>(i?'<w:r><w:br/></w:r>':'')+run(part)).join('')+'</w:p>';
  }).join('');
- const doc='<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+paragraphs+'<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="900" w:bottom="900" w:left="900" w:right="900"/></w:sectPr></w:body></w:document>';
- const styles=['Normal','Title','Subtitle','Contact','Heading2','Heading3','Meta','Bullet'].map((s,i)=>'<w:style w:type="paragraph" w:styleId="'+s+'"><w:name w:val="'+s+'"/>'+(i===4?'<w:pPr><w:outlineLvl w:val="1"/></w:pPr>':i===5?'<w:pPr><w:outlineLvl w:val="2"/></w:pPr>':'')+'<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="'+([22,36,24,19,26,23,19,21][i])+'"/></w:rPr></w:style>').join('');
+ const doc='<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>'+paragraphs+'<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="900" w:bottom="900" w:left="900" w:right="900"/></w:sectPr></w:body></w:document>';
+ const styles=['Normal','Title','Subtitle','Contact','Heading2','Heading3','Meta','Bullet'].map((s,i)=>'<w:style w:type="paragraph" w:styleId="'+s+'"><w:name w:val="'+s+'"/>'+(i===4?'<w:pPr><w:outlineLvl w:val="1"/></w:pPr>':i===5?'<w:pPr><w:outlineLvl w:val="2"/></w:pPr>':'')+'<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="'+([22,36,24,19,26,23,19,21][i])+'"/></w:rPr></w:style>').join('')+'<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:rPr><w:color w:val="2255AA"/><w:u w:val="single"/></w:rPr></w:style>';
  const files={
- '[Content_Types].xml':'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>',
- '_rels/.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
- 'word/_rels/document.xml.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>',
- 'word/document.xml':doc,
- 'word/styles.xml':'<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+styles+'</w:styles>'
+  '[Content_Types].xml':'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>',
+  '_rels/.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+  'word/_rels/document.xml.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'+linkRels.join('')+'</Relationships>',
+  'word/document.xml':doc,
+  'word/styles.xml':'<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+styles+'</w:styles>'
  };
- fs.writeFileSync(file,zip(files));
+ fs.writeFileSync(file,zip(files),{flag:'wx',mode:0o600});
 }
 function html(data){
  const content=rows(data).map(([style,text])=>{
- const tag=style==='title'?'h1':style==='h2'?'h2':style==='h3'?'h3':'p';
- return '<'+tag+' class="'+style+'">'+escapeXml(text).replace(/\n/g,'<br>')+'</'+tag+'>';
+   const tag=style==='title'?'h1':style==='h2'?'h2':style==='h3'?'h3':'p';
+   const value=style==='link'?'<a href="'+escapeXml(text)+'">'+escapeXml(text)+'</a>':escapeXml(text).replace(/\n/g,'<br>');
+   return '<'+tag+' class="'+style+'">'+value+'</'+tag+'>';
  }).join('');
- return '<!doctype html><html lang="'+escapeXml(data.language)+'" dir="'+(data.direction==='rtl'?'rtl':'ltr')+'"><head><meta charset="UTF-8"><style>@page{size:A4;margin:16mm}body{font-family:Arial,"DejaVu Sans",sans-serif;color:#152033;font-size:10pt;line-height:1.3}h1{font-size:21pt;margin:0}h2{font-size:12pt;border-bottom:1px solid #999;margin:12pt 0 4pt}h3{font-size:11pt;margin:8pt 0 2pt}p{margin:4pt 0}.subtitle{font-weight:bold}.contact,.meta{font-size:9pt;color:#555}.bullet{padding-inline-start:14pt}.bullet:before{content:"• "}</style></head><body>'+content+'</body></html>';
+ return '<!doctype html><html lang="'+escapeXml(data.language)+'" dir="'+(data.direction==='rtl'?'rtl':'ltr')+'"><head><meta charset="UTF-8"><style>@page{size:A4;margin:16mm}body{font-family:Arial,"DejaVu Sans",sans-serif;color:#152033;font-size:10pt;line-height:1.3}h1{font-size:21pt;margin:0}h2{font-size:12pt;border-bottom:1px solid #999;margin:12pt 0 4pt}h3{font-size:11pt;margin:8pt 0 2pt}p{margin:4pt 0}.subtitle{font-weight:bold}.contact,.meta{font-size:9pt;color:#555}.bullet{padding-inline-start:14pt}.bullet:before{content:"• "}a{color:#2255aa;text-decoration:underline}</style></head><body>'+content+'</body></html>';
 }
 function writePdf(data,dest){
  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'cv-craft-pdf-')),source=path.join(tmp,'cv.html');
@@ -103,7 +103,7 @@ function qa(pdf,docx){
  return {pdfTextCharacters:p.length,docxTextCharacters:d.length,missingUniqueTokens:[...new Set(missing)].slice(0,15),critical:p.length<30||d.length<30||missing.length>terms.length*.2};
 }
 function score(data){
- if(!Array.isArray(data.requirements)||!data.requirements.length)fail('No requirements');
+ validateFit(data);
  ids(data.requirements,'requirement');
  let total=0,verified=0,earned=0,unknown=0;
  for(const r of data.requirements){
@@ -141,7 +141,7 @@ function main(){
  }
  if(command==='qa'){console.log(JSON.stringify(qa(opt('pdf'),opt('docx')),null,2));return;}
  if(command==='inspect'){const p=workspace();console.log(JSON.stringify({workspace:p,approvals:approvals(p).records},null,2));return;}
- if(command==='migrate'){const data=read(file);if(data.schemaVersion==='1.0.0'){validate(data);console.log('Already v1.0.0');return;}fail('Unknown schema version; refusing unsafe migration');}
+ if(command==='migrate'){console.log(JSON.stringify(migrateFile(file),null,2));return;}
  if(command==='ocr'){
  if(!available('tesseract'))fail('Approved Tesseract is unavailable');
  let inputs=[file],tmp=fs.mkdtempSync(path.join(os.tmpdir(),'cv-craft-ocr-'));

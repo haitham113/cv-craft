@@ -16,12 +16,15 @@
           "weight",
           "status"
         ],
+        "additionalProperties": false,
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "requirement": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "weight": {
             "type": "number",
@@ -42,7 +45,8 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "uniqueItems": true
           },
           "rationale": {
             "type": "string"
@@ -50,5 +54,6 @@
         }
       }
     }
-  }
+  },
+  "additionalProperties": false
 }
