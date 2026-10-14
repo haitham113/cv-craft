@@ -5,6 +5,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import {validateCV,validateFit,migrateFile} from './lib/validate.mjs';
+import {assessTextParity} from './lib/text-parity.mjs';
+import {auditWorkflow} from './lib/workflow-gates.mjs';
 import {spawnSync} from 'node:child_process';
 
 const argv=process.argv.slice(2), command=argv.shift();
@@ -63,37 +65,86 @@ function zip(files){
  return Buffer.concat([...heads,c,end]);
 }
 function writeDocx(data,file){
- const rtl=data.direction==='rtl';
- const linkRels=[];let linkIndex=0;
- const paragraphs=rows(data).map(([style,text])=>{
-   const styleId=({title:'Title',subtitle:'Subtitle',contact:'Contact',link:'Normal',h2:'Heading2',h3:'Heading3',meta:'Meta',bullet:'Bullet'})[style]||'Normal';
-   const para='<w:pPr><w:pStyle w:val="'+styleId+'"/>'+(rtl?'<w:bidi/>':'')+'</w:pPr>';
-   const run=(value,link=false)=>'<w:r><w:rPr>'+(rtl?'<w:rtl/>':'')+(link?'<w:rStyle w:val="Hyperlink"/>':'')+'</w:rPr><w:t xml:space="preserve">'+escapeXml(value)+'</w:t></w:r>';
-   if(style==='link'){
-     const id='cvlink'+(++linkIndex);
-     linkRels.push('<Relationship Id="'+id+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="'+escapeXml(text)+'" TargetMode="External"/>');
-     return '<w:p>'+para+'<w:hyperlink r:id="'+id+'" w:history="1">'+run(text,true)+'</w:hyperlink></w:p>';
-   }
-   return '<w:p>'+para+String(text).split('\n').map((part,i)=>(i?'<w:r><w:br/></w:r>':'')+run(part)).join('')+'</w:p>';
+ const rtl=data.direction==='rtl',lang=escapeXml(data.language||'en');
+ const links=[];let nextLink=0;
+ const font=rtl?'DejaVu Sans':'Arial';
+ function run(text,hyperlink=false){
+  const rPr='<w:rPr>'+(rtl?'<w:rtl/>':'')+(hyperlink?'<w:rStyle w:val="Hyperlink"/>':'')+'</w:rPr>';
+  return '<w:r>'+rPr+'<w:t xml:space="preserve">'+escapeXml(text)+'</w:t></w:r>';
+ }
+ const paragraphs=rows(data).map(([style,value])=>{
+  const styleId=({title:'Title',subtitle:'Subtitle',contact:'Contact',link:'Normal',h2:'Heading2',h3:'Heading3',meta:'Meta',bullet:'Bullet'})[style]||'Normal';
+  const pPr='<w:pPr><w:pStyle w:val="'+styleId+'"/>'+
+    (rtl?'<w:bidi/><w:jc w:val="right"/>':'')+
+    (style==='bullet'?'<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>':'')+
+    '</w:pPr>';
+  if(style==='link'){
+   const id='cvlink'+(++nextLink);
+   links.push('<Relationship Id="'+id+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="'+escapeXml(value)+'" TargetMode="External"/>');
+   return '<w:p>'+pPr+'<w:hyperlink r:id="'+id+'" w:history="1">'+run(value,true)+'</w:hyperlink></w:p>';
+  }
+  return '<w:p>'+pPr+String(value).split('\n').map((chunk,i)=>(i?'<w:r><w:br/></w:r>':'')+run(chunk)).join('')+'</w:p>';
  }).join('');
- const doc='<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>'+paragraphs+'<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="900" w:bottom="900" w:left="900" w:right="900"/></w:sectPr></w:body></w:document>';
- const styles=['Normal','Title','Subtitle','Contact','Heading2','Heading3','Meta','Bullet'].map((s,i)=>'<w:style w:type="paragraph" w:styleId="'+s+'"><w:name w:val="'+s+'"/>'+(i===4?'<w:pPr><w:outlineLvl w:val="1"/></w:pPr>':i===5?'<w:pPr><w:outlineLvl w:val="2"/></w:pPr>':'')+'<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="'+([22,36,24,19,26,23,19,21][i])+'"/></w:rPr></w:style>').join('')+'<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:rPr><w:color w:val="2255AA"/><w:u w:val="single"/></w:rPr></w:style>';
+ const styleSettings=[
+  ['Normal','Normal',20,false,'152033',0,75,false],
+  ['Title','Title',42,true,'152033',0,45,true],
+  ['Subtitle','Subtitle',22,true,'152033',0,70,false],
+  ['Contact','Contact',18,false,'555555',0,85,false],
+  ['Heading2','Heading 2',24,true,'152033',180,70,true],
+  ['Heading3','Heading 3',22,true,'152033',115,18,true],
+  ['Meta','Meta',18,false,'555555',0,65,false],
+  ['Bullet','Bullet',20,false,'152033',0,48,false]
+ ];
+ const styles=styleSettings.map(([id,name,size,bold,color,before,after,keep])=>{
+  const heading=id==='Heading2'?1:id==='Heading3'?2:null;
+  const pPr='<w:pPr>'+ (heading!==null?'<w:outlineLvl w:val="'+heading+'"/>':'')+
+   (keep?'<w:keepNext/>':'')+
+   '<w:spacing w:before="'+before+'" w:after="'+after+'" w:line="270" w:lineRule="auto"/>'+
+   (id==='Heading2'?'<w:pBdr><w:bottom w:val="single" w:sz="6" w:space="4" w:color="A0A0A0"/></w:pBdr>':'')+
+   (id==='Bullet'?'<w:ind w:left="420" w:hanging="230"/>':'')+
+   '</w:pPr>';
+  return '<w:style w:type="paragraph" w:styleId="'+id+'"><w:name w:val="'+escapeXml(name)+'"/>'+
+    (id==='Normal'?'<w:qFormat/>':'')+
+    pPr+'<w:rPr><w:rFonts w:ascii="'+font+'" w:hAnsi="'+font+'" w:cs="DejaVu Sans"/>'+
+    '<w:color w:val="'+color+'"/>'+(bold?'<w:b/>':'')+
+    '<w:sz w:val="'+size+'"/><w:szCs w:val="'+size+'"/>'+
+    '<w:lang w:val="'+lang+'"'+(rtl?' w:bidi="'+lang+'"':'')+'/></w:rPr></w:style>';
+ }).join('');
+ const doc='<?xml version="1.0" encoding="UTF-8"?>'+
+  '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '+
+  'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'+
+  '<w:body>'+paragraphs+
+  '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'+
+  '<w:pgMar w:top="907" w:bottom="907" w:left="907" w:right="907"/>'+
+  '</w:sectPr></w:body></w:document>';
+ const numbering='<?xml version="1.0" encoding="UTF-8"?>'+
+  '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+
+  '<w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="singleLevel"/>'+
+  '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/>'+
+  '<w:lvlText w:val="•"/><w:lvlJc w:val="'+(rtl?'right':'left')+'"/>'+
+  '<w:pPr><w:tabs><w:tab w:val="num" w:pos="420"/></w:tabs>'+
+  '<w:ind '+(rtl?'w:right':'w:left')+'="420" w:hanging="230"/></w:pPr>'+
+  '<w:rPr><w:rFonts w:ascii="DejaVu Sans" w:hAnsi="DejaVu Sans"/></w:rPr>'+
+  '</w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>'+
+  '</w:numbering>';
  const files={
-  '[Content_Types].xml':'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>',
+  '[Content_Types].xml':'<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>',
   '_rels/.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
-  'word/_rels/document.xml.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'+linkRels.join('')+'</Relationships>',
+  'word/_rels/document.xml.rels':'<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="r2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>'+links.join('')+'</Relationships>',
   'word/document.xml':doc,
-  'word/styles.xml':'<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+styles+'</w:styles>'
+  'word/styles.xml':'<?xml version="1.0"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'+styles+'<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:rPr><w:color w:val="2255AA"/><w:u w:val="single"/></w:rPr></w:style></w:styles>',
+  'word/numbering.xml':numbering
  };
  fs.writeFileSync(file,zip(files),{flag:'wx',mode:0o600});
 }
+
 function html(data){
  const content=rows(data).map(([style,text])=>{
    const tag=style==='title'?'h1':style==='h2'?'h2':style==='h3'?'h3':'p';
-   const value=style==='link'?'<a href="'+escapeXml(text)+'">'+escapeXml(text)+'</a>':(style==='bullet'?'•&#160;':'')+escapeXml(text).replace(/\n/g,'<br>');
+   const value=style==='link'?'<a href="'+escapeXml(text)+'">'+escapeXml(text)+'</a>':(style==='bullet'?'<span class="bullet-marker" aria-hidden="true">•</span>':'')+escapeXml(text).replace(/\n/g,'<br>');
    return '<'+tag+' class="'+style+'">'+value+'</'+tag+'>';
  }).join('');
- return '<!doctype html><html lang="'+escapeXml(data.language)+'" dir="'+(data.direction==='rtl'?'rtl':'ltr')+'"><head><meta charset="UTF-8"><style>@page{size:A4;margin:16mm}body{font-family:Arial,"DejaVu Sans",sans-serif;color:#152033;font-size:10pt;line-height:1.3}h1{font-size:21pt;margin:0}h2{font-size:12pt;border-bottom:1px solid #999;margin:12pt 0 4pt}h3{font-size:11pt;margin:8pt 0 2pt}p{margin:4pt 0}.subtitle{font-weight:bold}.contact,.meta{font-size:9pt;color:#555}.bullet{margin-inline-start:14pt}'+(/^ar(?:-|$)/i.test(data.language)?'body{font-feature-settings:"liga" 0,"rlig" 0}':'')+'a{color:#2255aa;text-decoration:underline}</style></head><body>'+content+'</body></html>';
+ return '<!doctype html><html lang="'+escapeXml(data.language)+'" dir="'+(data.direction==='rtl'?'rtl':'ltr')+'"><head><meta charset="UTF-8"><style>@page{size:A4;margin:16mm}body{font-family:Arial,"DejaVu Sans",sans-serif;color:#152033;font-size:10pt;line-height:1.3}h1{font-size:21pt;margin:0}h2{font-size:12pt;border-bottom:1px solid #999;margin:12pt 0 4pt}h3{font-size:11pt;margin:8pt 0 2pt}p{margin:4pt 0}.subtitle{font-weight:bold}.contact,.meta{font-size:9pt;color:#555}.bullet{position:relative;margin-inline-start:14pt}.bullet-marker{position:absolute;inset-inline-start:-12pt}'+(/^ar(?:-|$)/i.test(data.language)?'body{font-feature-settings:"liga" 0,"rlig" 0}':'')+'a{color:#2255aa;text-decoration:underline}</style></head><body>'+content+'</body></html>';
 }
 function writePdf(data,dest){
  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'cv-craft-pdf-')),source=path.join(tmp,'cv.html');
@@ -105,14 +156,15 @@ function writePdf(data,dest){
  if(!fs.existsSync(dest)||fs.statSync(dest).size<100)fail('PDF output missing');
  }finally{fs.rmSync(tmp,{recursive:true,force:true});}
 }
-function qa(pdf,docx){
+function qa(pdf,docx,direction='ltr'){
  if(!available('pdftotext')||!available('unzip'))fail('QA needs pdftotext and unzip');
- const p=cmd('pdftotext',['-layout',pdf,'-']);
+ const pdfText=cmd('pdftotext',['-layout',pdf,'-']);
  const xml=cmd('unzip',['-p',docx,'word/document.xml']);
- const d=xml.replace(/<\/w:p>/g,'\n').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"');
- const norm=x=>x.normalize('NFKC').replace(/[\s\p{P}]+/gu,' ').toLowerCase();
- const pt=norm(p),dt=norm(d),terms=dt.split(' ').filter(x=>x.length>2),missing=terms.filter(x=>!pt.includes(x));
- return {pdfTextCharacters:p.length,docxTextCharacters:d.length,missingUniqueTokens:[...new Set(missing)].slice(0,15),critical:p.length<30||d.length<30||missing.length>terms.length*.2};
+ const docxText=xml.replace(/<\/w:p>/g,'\n')
+  .replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<')
+  .replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+ const score=assessTextParity(pdfText,docxText,{direction});
+ return {pdfTextCharacters:pdfText.length,docxTextCharacters:docxText.length,...score};
 }
 function score(data){
  validateFit(data);
@@ -142,6 +194,13 @@ function installApproved(){
  console.log(JSON.stringify({installed:pkgs,report:dependencyReport()},null,2));
 }
 function main(){
+ if(command==='audit-workflow'){
+  const journal=read(opt('file'));
+  const report=auditWorkflow(journal,{expectedContentHash:opt('expected-content-hash')});
+  console.log(JSON.stringify(report,null,2));
+  if(!report.ok)process.exitCode=2;
+  return;
+ }
  if(command==='doctor'){console.log(JSON.stringify(dependencyReport(),null,2));return;}
  if(command==='setup'){installApproved();return;}
  const file=opt('file'),w=opt('workspace','.cv-craft-work');
@@ -195,14 +254,15 @@ function main(){
  console.log(JSON.stringify(score(data),null,2));return;
  }
  if(command==='render'){
- const data=read(file);validate(data);if(!authorized(workspace(),'cv',data))fail('CV content changed since approval or approval missing');
+ const data=read(file);validate(data);
+ if(opt('journal')){const report=auditWorkflow(read(opt('journal')),{expectedContentHash:digest(data)});if(!report.ok)fail('Workflow approval journal failed: '+report.problems.join('; '));}if(!authorized(workspace(),'cv',data))fail('CV content changed since approval or approval missing');
  const out=path.resolve(opt('output','cv-craft-output'));folder(out);
  const base=safe(data.candidate.name)+'-'+safe(data.targetRole||'general-cv');
  let v=1;while(fs.existsSync(path.join(out,base+'-v'+v+'.docx'))||fs.existsSync(path.join(out,base+'-v'+v+'.pdf')))v++;
  const docx=path.join(out,base+'-v'+v+'.docx'),pdf=path.join(out,base+'-v'+v+'.pdf'),result={version:v,files:{},errors:{}};
  try{writeDocx(data,docx);result.files.docx=docx;}catch(e){result.errors.docx=e.message;}
  try{writePdf(data,pdf);result.files.pdf=pdf;}catch(e){result.errors.pdf=e.message;}
- if(result.files.docx&&result.files.pdf)try{result.qa=qa(pdf,docx);if(result.qa.critical){result.errors.qa='Critical PDF/DOCX text extraction mismatch; PDF blocked';fs.unlinkSync(pdf);delete result.files.pdf;result.errors.pdf='Removed PDF that did not pass text validation';}}catch(e){result.errors.qa=e.message;}
+ if(result.files.docx&&result.files.pdf)try{result.qa=qa(pdf,docx,data.direction||'ltr');if(result.qa.critical){result.errors.qa='Critical PDF/DOCX text extraction mismatch; PDF blocked';fs.unlinkSync(pdf);delete result.files.pdf;result.errors.pdf='Removed PDF that did not pass text validation';}}catch(e){result.errors.qa=e.message;}
  if(result.files.pdf){
   try{
    const layout=spawnSync(process.execPath,[new URL('./pdf-layout-qa.mjs',import.meta.url).pathname,'--pdf',pdf],{encoding:'utf8',timeout:30000});
@@ -210,6 +270,13 @@ function main(){
    result.layoutQa=JSON.parse(layout.stdout);
    if(!result.layoutQa.ok)fail('PDF layout geometry invalid');
   }catch(e){result.errors.layoutQa=e.message;if(fs.existsSync(pdf))fs.unlinkSync(pdf);delete result.files.pdf;}
+ }
+ if(result.files.docx){
+  const args=[new URL('./document-a11y-qa.mjs',import.meta.url).pathname,'--docx',docx,'--lang',data.language];
+  if(result.files.pdf)args.push('--pdf',pdf);
+  const a=spawnSync(process.execPath,args,{encoding:'utf8',timeout:30000});
+  if(a.error||a.status!==0)result.errors.accessibilityQa=a.stderr||a.error?.message||a.stdout||'Accessibility audit failed';
+  else result.accessibilityQa=JSON.parse(a.stdout);
  }
  console.log(JSON.stringify(result,null,2));if(Object.keys(result.errors).length)process.exitCode=2;return;
  }
@@ -243,6 +310,6 @@ function main(){
  fs.rmSync(p,{recursive:true,force:true});
  console.log('Managed temporary workspace deleted on explicit closure; delivered and source documents untouched');return;
  }
- fail('Usage: cv-craft doctor|setup|validate|approve|render|qa|score|ocr|inspect|migrate|checkpoint-save|checkpoint-show|checkpoint-delete|retain-approvals|close --file FILE [--workspace DIR]');
+ fail('Usage: cv-craft audit-workflow|doctor|setup|validate|approve|render|qa|score|ocr|inspect|migrate|checkpoint-save|checkpoint-show|checkpoint-delete|retain-approvals|close --file FILE [--workspace DIR]');
 }
 try{main();}catch(e){console.error('CV Craft: '+e.message);process.exitCode=1;}

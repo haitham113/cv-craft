@@ -52,3 +52,20 @@ Where the installed WeasyPrint supports `--pdf-tags`, the renderer enables tagge
 ### Arabic text extraction mitigation
 
 For Arabic-language PDFs, WeasyPrint rendering now disables optional/required ligature OpenType substitutions (`liga` and `rlig`) to improve Unicode copy/paste mapping where system fonts and renderer support it. This is an experimental compatibility mitigation; it may change typography. Full visual review and extraction parity remain mandatory, and PDFs with extraction mismatches stay blocked.
+
+## Release hardening round 2
+
+- **Strict document parity:** PDF and DOCX must preserve every expected word and number. In mixed-script or RTL text, a complete token match does not prove correct reading order; visual review remains required.
+- **Consent journal audit (optional):** `node scripts/cv-craft.mjs audit-workflow --file workflow-journal.json` checks stage ordering, named-source permissions, candidate approvals, free ATS consent and approval invalidation. `render --journal workflow-journal.json` additionally checks that the approved content hash matches the CV. The journal is an operator attestation, not identity proof.
+- **Document accessibility audit:** `node scripts/document-a11y-qa.mjs --docx CV.docx --pdf CV.pdf --lang en`. DOCX semantic headings, hyperlinks and hidden document content are inspected. PDF tagging is reported; accessibility conformance and screen-reader reading order are **not certified**.
+- **Install smoke tests:** Both user-wide and project-local symlink layouts are tested on GitHub Actions. Actual automatic skill selection by Codex must be verified in a real Codex session.
+
+This hardening work does not close the known release blockers: comprehensive RTL corpus/reading-order verification, independent assistive-technology assessment, actual multi-step Codex employer research and interviewing, candidate visual acceptance, and local activation confirmation.
+
+### English DOCX layout regression fix
+
+The development branch now writes real Word bullet-numbering structures (including hanging indents), uses A4 page geometry, and applies paragraph spacing/semantic heading borders corresponding more closely to the PDF. PDF bullets have separately positioned markers so wrapped lines align with the text. This fixes the missing experience bullets and dense section layout observed in the synthetic Ali Ahmed sample.
+
+GitHub Actions now installs LibreOffice Writer during test runs to convert synthetic DOCX files to PDF. The regression suite verifies bullet markers survive the conversion, checks text and page geometry, and compares page count/relative vertical content span against the independently rendered PDF. The automatic document QA also rejects missing DOCX numbering or non-A4 output. **These checks do not replace final manual side-by-side visual inspection on the candidate's workstation.**
+
+This change is in **Draft PR #2 only** until it is reviewed and merged. If testing with a local skill checkout, update the branch and restart Codex. The `npx skills add` installation was copied, so a copied `~/.agents/skills/cv-craft` directory does not update when the repository changes; reinstall it or verify that Codex loads the desired symlink installation before retesting.
