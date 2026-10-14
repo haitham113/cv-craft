@@ -54,3 +54,16 @@ Do not commit candidate data, approval exports, or checkpoint files to Git.
 ## OCR acceptance
 
 Synthetic scanned-CV regression tests use the approved local Tesseract executable. OCR is only an extraction method: candidate verification remains required for important details such as names, dates, job titles, qualifications, and performance metrics. Do not treat OCR confidence or text similarity as independent evidence of the candidate's claims.
+
+## Release hardening diagnostics
+
+```bash
+# Operate only on candidate-supplied or explicitly authorized material.
+node scripts/cv-craft.mjs audit-workflow --file workflow-journal.json
+node scripts/document-a11y-qa.mjs --docx candidate.docx --pdf candidate.pdf --lang en
+node scripts/pdf-layout-qa.mjs --pdf candidate.pdf --preview-dir .cv-craft-work/previews
+```
+
+To link the workflow approval journal to a render, use `render --journal workflow-journal.json`; a successful journal check requires the most recently approved draft hash to equal the current canonical CV hash. This extra gate is optional for backward compatibility; its absence is not evidence of candidate approval. Never synthesize candidate approval events. Record them only after an actual approval in the conversation.
+
+An accessibility QA warning, including an untagged PDF or a human reading-order review requirement, is **not** a certification that an output is accessible. Do not deliver failed documents or describe machine-checkable tests as human visual approval.
