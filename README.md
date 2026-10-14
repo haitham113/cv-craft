@@ -61,3 +61,11 @@ For Arabic-language PDFs, WeasyPrint rendering now disables optional/required li
 - **Install smoke tests:** Both user-wide and project-local symlink layouts are tested on GitHub Actions. Actual automatic skill selection by Codex must be verified in a real Codex session.
 
 This hardening work does not close the known release blockers: comprehensive RTL corpus/reading-order verification, independent assistive-technology assessment, actual multi-step Codex employer research and interviewing, candidate visual acceptance, and local activation confirmation.
+
+### English DOCX layout regression fix
+
+The development branch now writes real Word bullet-numbering structures (including hanging indents), uses A4 page geometry, and applies paragraph spacing/semantic heading borders corresponding more closely to the PDF. PDF bullets have separately positioned markers so wrapped lines align with the text. This fixes the missing experience bullets and dense section layout observed in the synthetic Ali Ahmed sample.
+
+GitHub Actions now installs LibreOffice Writer during test runs to convert synthetic DOCX files to PDF. The regression suite verifies bullet markers survive the conversion, checks text and page geometry, and compares page count/relative vertical content span against the independently rendered PDF. The automatic document QA also rejects missing DOCX numbering or non-A4 output. **These checks do not replace final manual side-by-side visual inspection on the candidate's workstation.**
+
+This change is in **Draft PR #2 only** until it is reviewed and merged. If testing with a local skill checkout, update the branch and restart Codex. The `npx skills add` installation was copied, so a copied `~/.agents/skills/cv-craft` directory does not update when the repository changes; reinstall it or verify that Codex loads the desired symlink installation before retesting.
