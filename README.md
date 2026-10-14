@@ -44,3 +44,7 @@ Treat suspicious-source scans as heuristic warnings (not a guarantee against pro
 
 **Release status:** DEVELOPMENT, NOT READY. Multilingual PDF extraction and accessibility remain blockers. No merge without explicit owner approval.
 
+
+### Optional tagged-PDF output
+
+Where the installed WeasyPrint supports `--pdf-tags`, the renderer enables tagged PDF structure automatically. Older WeasyPrint versions continue to be supported but are reported as untagged by PDF layout QA. Tagging alone is **not** PDF/UA or WCAG certification, and Arabic/RTL Unicode extraction is still a release blocker.

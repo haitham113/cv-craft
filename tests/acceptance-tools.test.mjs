@@ -33,7 +33,7 @@ test('PDF layout checks inspect text bounds and render previews', {skip:!pdfTool
  const generated=node(cli,['render','--file','fixtures/example.json','--workspace',state,'--output',out]);
  assert.equal(generated.status,0,generated.stderr+generated.stdout);
  const d=JSON.parse(generated.stdout);assert.equal(d.layoutQa?.ok,true);assert.ok(d.layoutQa.totalSelectableWords>10);
- assert.equal(d.layoutQa.visualInspection,'manual-required');assert.equal(d.layoutQa.tagged,'no');
+ assert.equal(d.layoutQa.visualInspection,'manual-required');const weasyHelp=spawnSync('weasyprint',['--help'],{encoding:'utf8'});assert.equal(d.layoutQa.tagged,weasyHelp.stdout?.includes('--pdf-tags')?'yes':'no');
  const run=node(layout,['--pdf',d.files.pdf,'--preview-dir',previews]);
  assert.equal(run.status,0,run.stderr);const qa=JSON.parse(run.stdout);
  assert.ok(fs.existsSync(qa.previewPaths[0]));assert.ok(qa.warnings.some(x=>x.includes('human visual review')));

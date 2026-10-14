@@ -99,7 +99,7 @@ function writePdf(data,dest){
  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'cv-craft-pdf-')),source=path.join(tmp,'cv.html');
  fs.writeFileSync(source,html(data));
  try{
- if(available('weasyprint'))cmd('weasyprint',[source,dest]);
+ if(available('weasyprint')){const help=spawnSync('weasyprint',['--help'],{encoding:'utf8',timeout:5000});const tagged=help.status===0&&help.stdout.includes('--pdf-tags');cmd('weasyprint',[...(tagged?['--pdf-tags']:[]),source,dest]);}
  else if(available('chromium'))cmd('chromium',['--headless','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--no-pdf-header-footer','--print-to-pdf='+dest,'file://'+source]);
  else fail('Approved PDF generator unavailable; need weasyprint or chromium');
  if(!fs.existsSync(dest)||fs.statSync(dest).size<100)fail('PDF output missing');
